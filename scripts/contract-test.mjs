@@ -184,7 +184,10 @@ try {
   if (code !== 0) console.log(seedOut);
   check("seeding used idempotency keys", calls.filter((c) => c.method === "POST" && c.path.startsWith("/v2/")).every((c) => !!c.requestId));
 
-  app = spawn("npx", ["next", "start", "-p", String(APP_PORT)], { env, stdio: "ignore" });
+  const portBusy = await fetch(`${APP}/api/health`).then(() => true, () => false);
+  if (portBusy) throw new Error(`Port ${APP_PORT} is already in use — stop the other server first`);
+  // Own process group so the Next.js server (a grandchild) is killed with it.
+  app = spawn(path.resolve("node_modules/.bin/next"), ["start", "-p", String(APP_PORT)], { env, stdio: "ignore", detached: true });
   for (let i = 0; i < 40; i++) {
     try {
       if ((await fetch(`${APP}/api/health`)).ok) break;
@@ -273,7 +276,11 @@ try {
 } catch (e) {
   check("contract run completed", false, e.stack);
 } finally {
-  app?.kill();
+  if (app?.pid) {
+    try {
+      process.kill(-app.pid, "SIGTERM");
+    } catch {}
+  }
   mock.close();
 }
 const failed = results.filter((r) => !r).length;

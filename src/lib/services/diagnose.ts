@@ -48,7 +48,7 @@ export async function diagnoseInvoice(invoiceId: string, opts: { force?: boolean
 
 export async function diagnoseAll(opts: { force?: boolean } = {}) {
   const open = repo.listInvoices().filter((i) => isOpenStatus(i.status));
-  // Small concurrency: fast enough for a live demo, gentle on rate limits.
+  // Bounded concurrency: a full board diagnoses in about the time of one call during a live demo.
   const results: { id: string; ok: boolean; error?: string }[] = [];
   const queue = [...open];
   async function worker() {
@@ -61,6 +61,7 @@ export async function diagnoseAll(opts: { force?: boolean } = {}) {
       }
     }
   }
-  await Promise.all([worker(), worker(), worker()]);
+  const n = Math.max(1, Math.min(Number(process.env.DIAGNOSE_CONCURRENCY ?? 6), open.length));
+  await Promise.all(Array.from({ length: n }, () => worker()));
   return results;
 }
