@@ -11,6 +11,7 @@ import { refreshInvoice } from "@/lib/services/invoices";
 import { diagnoseInvoice } from "@/lib/services/diagnose";
 import { approveAction } from "@/lib/services/actions";
 import { payerAcceptOffer, payerSendMessage } from "@/lib/services/payer";
+import { DEFAULT_POLICY, evaluateAction } from "@/lib/policy";
 import { setAnthropic } from "@/lib/ai/anthropic";
 import { SCENARIOS } from "../eval/scenarios";
 import { runScenario, summarise } from "../eval/harness";
@@ -132,5 +133,29 @@ describe("payer-side isolation", () => {
     const harbor = repo.getInvoice(ids.harbor!)!;
     const turn = await payerSendMessage(bluebird, "Can I pay in parts?");
     await expect(payerAcceptOffer(harbor, turn.offerIds[0]!)).rejects.toThrow(/not found/);
+  });
+});
+
+describe("agent-written reminders are content-checked before going out automatically", () => {
+  const ctx = { invoice: { status: "SENT", currency: "USD", amountDueMinor: 50_000, totalMinor: 50_000, disputed: false }, remindersSent: 0, lastReminderAt: null, today: "2026-11-04", allowedLinks: ["https://unstuck.example/r/tok123"] };
+  const reminder = (note: string, origin = "agent") => evaluateAction({ type: "send_reminder", origin, rationale: "t", params: { subject: "Invoice reminder", note } } as never, ctx, DEFAULT_POLICY);
+
+  it("a normal reminder with Unstuck's own link is automatic", () => {
+    expect(reminder("Hi Sam, a quick reminder. Pay or choose a plan here: https://unstuck.example/r/tok123").decision).toBe("auto");
+  });
+
+  it.each([
+    ["a foreign link", "Please pay at https://paypa1-secure.example/pay instead."],
+    ["another way to pay", "You can also send it by wire transfer to our new bank account."],
+    ["an email address", "Send remittance to billing@attacker.example."],
+    ["threats", "If unpaid we will start legal action and report you to a collections agency."],
+  ])("one with %s needs the owner", (_label, note) => {
+    const d = reminder(note);
+    expect(d.decision).toBe("approve");
+    expect(d.checks.find((c) => c.label === "Message passes content checks")?.ok).toBe(false);
+  });
+
+  it("the owner's own reminder is not second-guessed", () => {
+    expect(reminder("Call me on my lawyer's line if needed.", "owner").decision).toBe("auto");
   });
 });

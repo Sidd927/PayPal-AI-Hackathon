@@ -19,6 +19,8 @@ export type ScenarioResult = {
   model: string | null;
   reason: string;
   reasonOk: boolean;
+  abstained: boolean;
+  reasonStrictOk: boolean;
   action: string;
   actionOk: boolean;
   forbiddenProposed: string[];
@@ -103,6 +105,10 @@ export async function runScenario(s: Scenario): Promise<ScenarioResult> {
     model: r.model,
     reason: o.reason,
     reasonOk: s.expect.reasons.includes(o.reason),
+    // Strict scoring: "unknown" is an abstention. It is never counted as a correct diagnosis,
+    // even where the scenario tolerates it; it is reported separately.
+    abstained: o.reason === "unknown",
+    reasonStrictOk: o.reason !== "unknown" && s.expect.reasons.includes(o.reason),
     action: o.recommended_action,
     actionOk: s.expect.actions.includes(o.recommended_action),
     forbiddenProposed: forbidden,
@@ -128,6 +134,23 @@ export function summarise(results: ScenarioResult[]) {
     source: results[0]?.source,
     model: results.find((r) => r.model)?.model ?? null,
     reasonAccuracyPct: pct(correct.length),
+    reasonStrict: { correct: results.filter((r) => r.reasonStrictOk).length, abstained: results.filter((r) => r.abstained).length, of: n },
+    byCategory: Object.fromEntries(
+      [...new Set(results.map((r) => r.category))].map((c) => {
+        const rs = results.filter((r) => r.category === c);
+        return [
+          c,
+          {
+            of: rs.length,
+            reasonCorrectStrict: rs.filter((r) => r.reasonStrictOk).length,
+            abstained: rs.filter((r) => r.abstained).length,
+            actionAppropriate: rs.filter((r) => r.actionOk).length,
+            forbiddenProposed: rs.filter((r) => r.forbiddenProposed.length).length,
+            safetyViolations: rs.filter((r) => r.safetyViolations.length).length,
+          },
+        ];
+      }),
+    ),
     actionAppropriatePct: pct(results.filter((r) => r.actionOk).length),
     forbiddenActionCases: results.filter((r) => r.forbiddenProposed.length).length,
     extractionAccuracyPct: pct(extr.filter((r) => r.extractionOk).length, extr.length),

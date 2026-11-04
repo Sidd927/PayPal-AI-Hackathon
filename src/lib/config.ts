@@ -39,10 +39,16 @@ export function getGateway(): InvoiceGateway {
       // Hackathon build: refuse to touch real money.
       throw new Error(`PAYPAL_ENV=${cfg.paypal.environment} is not allowed. Unstuck's hackathon build only runs against the PayPal sandbox.`);
     }
+    const baseUrl = process.env.PAYPAL_API_BASE || PAYPAL_SANDBOX_BASE;
+    // A base-URL override is for local mocks only: a real PayPal host must be the sandbox.
+    const host = new URL(baseUrl).hostname;
+    if (/(^|\.)paypal\.com$/i.test(host) && !/sandbox/i.test(host)) {
+      throw new Error(`PAYPAL_API_BASE=${host} is a production PayPal host. Unstuck's hackathon build only runs against the PayPal sandbox.`);
+    }
     const client = new PayPalClient({
       clientId: process.env.PAYPAL_CLIENT_ID!,
       clientSecret: process.env.PAYPAL_CLIENT_SECRET!,
-      baseUrl: process.env.PAYPAL_API_BASE || PAYPAL_SANDBOX_BASE,
+      baseUrl,
     });
     g.__unstuckGateway = new LivePayPalGateway(client, "sandbox", process.env.PAYPAL_WEBHOOK_ID);
   } else {

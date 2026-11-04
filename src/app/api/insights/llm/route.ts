@@ -18,7 +18,7 @@ export const POST = route(async (req: Request) => {
   const client = getAnthropic();
   if (!client) return json({ error: "Claude is not configured on this server (ANTHROPIC_API_KEY). The Unstuck Insights agent still works." }, 503);
   if (!consumeAiBudget()) return json({ error: "Daily AI call limit reached" }, 429);
-  const body = await readJson<Req>(req);
+  const body = await readJson<Req>(req, 1_000_000); // Studio sends the report schema and query results each turn
 
   const messages: Anthropic.Beta.BetaMessageParam[] = [];
   const push = (role: "user" | "assistant", block: Anthropic.Beta.BetaContentBlockParam) => {

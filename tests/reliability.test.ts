@@ -136,3 +136,40 @@ describe("owner console auth (P1)", () => {
     }
   });
 });
+
+describe("sandbox-only guard (P1)", () => {
+  const withEnv = (vars: Record<string, string | undefined>, fn: () => void) => {
+    const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+    for (const [k, v] of Object.entries(vars)) (v === undefined ? delete process.env[k] : (process.env[k] = v));
+    try {
+      fn();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) (v === undefined ? delete process.env[k] : (process.env[k] = v));
+      setGateway(new SimulatedGateway());
+    }
+  };
+  const live = { UNSTUCK_MODE: undefined, PAYPAL_CLIENT_ID: "guard-test-id", PAYPAL_CLIENT_SECRET: "guard-test-secret" };
+
+  it("refuses PAYPAL_ENV=live", () => {
+    withEnv({ ...live, PAYPAL_ENV: "live", PAYPAL_API_BASE: undefined }, () => {
+      setGateway(null as never);
+      expect(() => getGateway()).toThrow(/only runs against the PayPal sandbox/);
+    });
+  });
+
+  it("refuses a production PayPal host smuggled in through PAYPAL_API_BASE", () => {
+    withEnv({ ...live, PAYPAL_ENV: "sandbox", PAYPAL_API_BASE: "https://api-m.paypal.com" }, () => {
+      setGateway(null as never);
+      expect(() => getGateway()).toThrow(/production PayPal host/);
+    });
+  });
+
+  it("allows the sandbox host and local mocks", () => {
+    for (const base of ["https://api-m.sandbox.paypal.com", "http://127.0.0.1:4010"]) {
+      withEnv({ ...live, PAYPAL_ENV: "sandbox", PAYPAL_API_BASE: base }, () => {
+        setGateway(null as never);
+        expect(getGateway().mode).toBe("live");
+      });
+    }
+  });
+});

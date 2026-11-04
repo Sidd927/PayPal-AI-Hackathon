@@ -75,7 +75,7 @@ export function PolicyForm() {
             </Row>
 
             <h2 className="mt-8 font-display text-xl text-ink">Reminders</h2>
-            <Row title="Send reminders on my behalf" help="Reason-aware reminders go out through PayPal without asking you, within the limits below. New recipients and disputes always ask first.">
+            <Row title="Send reminders on my behalf" help="Reason-aware reminders go out through PayPal without asking you, within the limits below. New recipients, disputes, and messages with links, payment details or legal language always ask first.">
               <Toggle on={p.autoSendReminders} onChange={(v) => set("autoSendReminders", v)} label="Send reminders automatically" />
             </Row>
             <Row title="Days between reminders" help="Unstuck won't nudge the same client more often than this.">

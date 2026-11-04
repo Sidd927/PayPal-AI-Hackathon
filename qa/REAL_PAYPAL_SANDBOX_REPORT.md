@@ -1,6 +1,23 @@
 # Real PayPal Sandbox Report
 
-**Status: NOT YET VERIFIED AGAINST THE REAL SANDBOX.** This environment's egress policy blocks `api-m.sandbox.paypal.com` (proxy 403, rechecked 2026-11-04 in Phase 2), and no sandbox credentials were provided. Nothing in this repository claims a real PayPal transaction has occurred.
+**Status: NOT YET VERIFIED AGAINST THE REAL SANDBOX.** Nothing in this repository claims a real PayPal transaction has occurred.
+
+**Exact blockers (rechecked 2026-11-04, Phase 3):**
+
+1. Network: `curl -X POST https://api-m.sandbox.paypal.com/v1/oauth2/token` from this build environment returns no connection (HTTP 000; the egress proxy refuses the tunnel). `api.anthropic.com` and GitHub are reachable from the same environment, so this is a host allow-list, not an outage.
+2. Credentials: `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` and `PAYPAL_WEBHOOK_ID` are not set, and there is no `.env`. They must come from the owner's PayPal developer account; none were invented.
+
+**Fastest path for the owner (about 20 minutes, on any machine with normal internet):**
+
+```bash
+git clone https://github.com/Sidd927/PayPal-AI-Hackathon && cd PayPal-AI-Hackathon && npm ci
+cp .env.example .env    # fill PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, DEMO_PAYER_EMAIL (sandbox personal account)
+npm run check:sandbox   # rows 1–3 below
+npm run seed:sandbox    # rows 4–6
+npm run build && OWNER_BASIC_AUTH="you:a-long-password" npm start   # production + live PayPal now requires an owner password
+```
+
+Then walk rows 7–17 in the browser and paste the debug ids into the last table.
 
 ## What *is* verified
 
@@ -9,7 +26,7 @@
 | Request shapes | Matched against the source of PayPal's official `@paypal/agent-toolkit` 1.11.0, which implements the same Invoicing endpoints |
 | Client behaviour (OAuth caching, 401 refresh, idempotency header, retry rules, error mapping, debug ids) | `tests/paypal-client.test.ts` |
 | Full-replacement PUT body | Unit test + strict mock that **rejects** read-only fields and missing items/recipients |
-| End-to-end live code path over HTTP | `npm run test:contract`: 23/23 checks, 84 calls against a stateful mock (seed, sync, remind, PUT, conditional rules, record payment, cancel reminders, signed, forged and duplicate webhooks, plan progression to PAID) |
+| End-to-end live code path over HTTP | `npm run test:contract`: 25/25 checks, 97 calls against a stateful mock (seed, sync, remind, PUT, conditional rules, record payment, cancel reminders, signed, forged and duplicate webhooks, plan progression to PAID) |
 | Webhook resource shape | Handler accepts `resource.id` (as in PayPal's published sample, `INV2-…`) and `resource.invoice.id` |
 
 ## Operations used and how to verify each in the sandbox
@@ -38,6 +55,7 @@
 
 - A PayPal developer account, with a sandbox **business** account (the invoicer) and a sandbox **personal** account (the payer). Both are created by default under Testing Tools → Sandbox Accounts.
 - A REST app (Apps & Credentials → Sandbox) → `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET`.
+- `OWNER_BASIC_AUTH` when running `next start` with real credentials: the owner console fails closed (503) without it.
 - For webhooks: a public https URL (Render, or a tunnel such as `cloudflared tunnel --url http://localhost:3000`), then `npm run check:sandbox -- --register-webhook` → `PAYPAL_WEBHOOK_ID`.
 - **Known PayPal behaviour:** webhook events fire only for the REST app that processed the action. Create the invoices (seed) with the same app whose webhook is registered.
 

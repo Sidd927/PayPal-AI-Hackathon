@@ -19,9 +19,9 @@ export function assertSameOrigin(req: Request) {
   }
 }
 
-export async function readJson<T = Record<string, unknown>>(req: Request): Promise<T> {
+export async function readJson<T = Record<string, unknown>>(req: Request, maxBytes = 64_000): Promise<T> {
   const text = await req.text();
-  if (text.length > 64_000) throw Object.assign(new Error("Request too large"), { status: 413 });
+  if (text.length > maxBytes) throw Object.assign(new Error("Request too large"), { status: 413 });
   if (!text) return {} as T;
   try {
     return JSON.parse(text) as T;

@@ -100,6 +100,7 @@ export function policyContextFor(row: InvoiceRow, today = todayIso()): PolicyCon
     remindersSent: r.sent,
     lastReminderAt: r.last,
     today,
+    allowedLinks: [resolutionUrl(row.payer_token)],
   };
 }
 

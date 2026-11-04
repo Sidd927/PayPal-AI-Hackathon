@@ -49,7 +49,25 @@ export type PolicyContext = {
   remindersSent: number;
   lastReminderAt: string | null; // ISO date
   today: string; // ISO date
+  /** Links Unstuck itself generated for this invoice (the resolution page); any other link needs the owner. */
+  allowedLinks?: string[];
 };
+
+/**
+ * Deterministic checks on agent-written text that would go to a client automatically. The model writes
+ * reminders from client text that may be hostile, so anything unusual goes to the owner instead of out.
+ */
+export function outboundTextConcerns(text: string, allowedLinks: string[] = []): string[] {
+  let t = text;
+  for (const l of allowedLinks) if (l) t = t.split(l).join("");
+  const concerns: string[] = [];
+  if (/https?:\/\/|www\./i.test(t)) concerns.push("The message contains a link Unstuck didn't generate.");
+  if (/[\w.+-]+@[\w-]+\.[\w.-]+/.test(t)) concerns.push("The message mentions an email address.");
+  if (/\b(bank account|account number|routing number|sort code|iban|swift|wire transfer|zelle|venmo|cash ?app|crypto|bitcoin|gift cards?)\b/i.test(t)) concerns.push("The message mentions another way to pay.");
+  if (/\b(lawsuit|sue|legal action|court|collections? agency|debt collector|police|credit (score|report|bureau)|lawyer|attorney)\b/i.test(t)) concerns.push("The message uses legal or threatening language.");
+  if (t.length > 1500) concerns.push("The message is unusually long.");
+  return concerns;
+}
 
 /* ------------------------------------------------------------------ */
 /* Payment plans                                                       */
@@ -179,6 +197,12 @@ export function evaluateAction(action: ProposedAction, ctx: PolicyContext, polic
       if (newRecipients) reasons.push("Sends to a new recipient — confirm the address.");
       if (!quietOk) reasons.push("Too soon after the previous reminder.");
       if (!policy.autoSendReminders) reasons.push("Automatic reminders are turned off.");
+      if (action.origin !== "owner") {
+        const text = parsed.data as { subject: string; note?: string };
+        const concerns = outboundTextConcerns(`${text.subject}\n${text.note ?? ""}`, ctx.allowedLinks);
+        checks.push({ label: "Message passes content checks", ok: concerns.length === 0, detail: concerns.join(" ") || undefined });
+        reasons.push(...concerns);
+      }
       if (action.origin === "owner") return { decision: "auto", reasons: ["Owner-initiated"], checks };
       return { decision: reasons.length ? "approve" : "auto", reasons, checks };
     }
