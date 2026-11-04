@@ -12,7 +12,7 @@ import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { ACTION_TYPES, type ProposedAction, STUCK_REASONS, type StuckReason } from "../domain";
 import { addDays, isIsoDate } from "../dates";
 import { tryToMinor } from "../money";
-import { buildPlan, type Policy, type PolicyContext, suggestPlans } from "../policy";
+import { buildPlan, type Policy, type PolicyContext, suggestPlans, validatePlan } from "../policy";
 import { consumeAiBudget, FALLBACK_BETA, getAnthropic, quoteUntrusted } from "./anthropic";
 import { readConfig } from "../config";
 
@@ -212,17 +212,23 @@ export function diagnoseWithRules(input: DiagnosisInput): DiagnosisOutput {
   const first = input.owner.name.split(" ")[0] ?? input.owner.name;
   const client = input.invoice.recipient.name?.split(" ")[0] ?? "there";
   const num = input.invoice.number ?? "";
+  // Newest message first: a later message ("actually, item 2 never arrived") supersedes an earlier one.
   let reason: StuckReason = "unknown";
-  for (const [r, re] of KW) if (re.test(clientText)) {
-    reason = r;
-    break;
+  const newestFirst = input.messages.filter((m) => m.from === "client").map((m) => m.text).reverse();
+  outer: for (const text of newestFirst) {
+    for (const [r, re] of KW)
+      if (re.test(text)) {
+        reason = r;
+        break outer;
+      }
   }
   if (reason === "unknown") {
     if (input.invoice.days_overdue <= 0) reason = "not_due";
     else if (input.reminders.sent >= 3) reason = "unresponsive";
     else if (!clientText) reason = "forgot";
   }
-  const po = /\b(PO[-\s#:]*[A-Z0-9-]{3,})/i.exec(clientText)?.[1]?.replace(/\s+/g, "") ?? null;
+  // A PO token must contain a digit right after the "PO" prefix ("PO number" is not a PO).
+  const po = /\b(P\.?O\.?[-\s#:]*\d[\w-]{2,})/i.exec(clientText)?.[1]?.replace(/\s+/g, "") ?? null;
   const email = /[\w.+-]+@[\w-]+\.[\w.-]+/.exec(clientText)?.[0]?.replace(/\.+$/, "") ?? null;
   const amount = /\$\s?([\d,]+(?:\.\d{2})?)/.exec(clientText)?.[1] ?? null;
   const base = {
@@ -283,8 +289,13 @@ export function proposalsFromDiagnosis(
       const n = Math.max(2, Math.min(policy.maxInstallments, d.plan?.installment_count ?? policy.maxInstallments));
       const first = tryToMinor(d.plan?.first_payment ?? d.extracted.proposed_first_payment);
       const firstOk = first !== null && first > 0 && first < due ? first : null;
+      // The model's numbers are only a starting point: if they break policy, fall back to a compliant plan
+      // rather than putting a plan the owner would have to reject in front of them.
       let installments = buildPlan({ amountDueMinor: due, installmentCount: n, firstPaymentMinor: firstOk, firstDate: ctx.today, policy });
-      if (!installments) installments = suggestPlans(ctx, policy).at(-1) ?? null;
+      if (!installments || !validatePlan(installments, ctx, policy).every((c) => c.ok)) {
+        const options = suggestPlans(ctx, policy);
+        installments = options.find((o) => o.length === n) ?? options.at(-1) ?? null;
+      }
       if (!installments) break;
       out.push({ type: "offer_payment_plan", origin: "agent", rationale, params: { installments } });
       break;
