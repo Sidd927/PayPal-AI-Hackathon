@@ -29,7 +29,7 @@ Deadline: **Thu Nov 12 2026, 12:00 PM PT**. Target submission: **Wed Nov 11**.
 ## Prize eligibility
 
 - Grand Prize / honourable mentions: automatic.
-- **AG Grid** sponsor prize: AG Grid is used on the board and the activity log. Mention it in the Devpost "Built with" list and the description.
+- **AG Grid** sponsor prize: AG Grid on the board and activity log; AG Studio for Insights, including a custom Studio Agent Framework agent. Mention both in "Built with". **Request the AG Studio trial key** (info@ag-grid.com) and set `NEXT_PUBLIC_AG_GRID_LICENSE_KEY` in hosting before judging, so the watermark is gone. See `qa/AG_STUDIO_SPONSOR_READINESS.md`.
 - **Render** sponsor prize (alternative): only if deployed on Render. A project can win only one sponsor prize, and AG Grid is our primary target.
 
 ## Final checks before pressing Submit
@@ -40,4 +40,6 @@ Deadline: **Thu Nov 12 2026, 12:00 PM PT**. Target submission: **Wed Nov 11**.
 - [ ] Repo public; no secrets (`git log -p | grep -i secret` is clean)
 - [ ] Video public, < 3:00, link works in a private window
 - [ ] Devpost fields: name, tagline, description, built-with, repo URL, video URL, demo URL, screenshots
+- [ ] Replace the bracketed placeholders in `DEVPOST_DESCRIPTION.md` with the real sandbox and Claude results (or delete them); never publish a number that wasn't measured
+- [ ] Hosted demo set to `UNSTUCK_MODE=simulation` for open judging, or real sandbox with `OWNER_BASIC_AUTH` and credentials in the testing-instructions field
 - [ ] Re-read the official rules page once (it could not be fetched from the build environment)

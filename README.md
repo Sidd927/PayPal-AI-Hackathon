@@ -2,7 +2,9 @@
 
 **Every unpaid invoice has a reason. Unstuck finds it, and resolves it with your client, inside PayPal.**
 
-Unstuck is an AI receivables agent for small businesses that invoice with **PayPal Invoicing**. Most collections tools send the same reminder again and again. Unstuck works out *why* each invoice is stuck: a missing PO, a cash crunch, a dispute, the wrong contact, a cheque in the post, or a client who simply forgot. It fixes that cause with a native PayPal action, within rules the owner sets.
+Unstuck is the AI receivables resolution agent for small businesses that invoice with **PayPal Invoicing**. It diagnoses why each payment is stuck, negotiates policy-compliant resolutions with the client, executes supported actions through PayPal, and follows agreements through to actual payment.
+
+Most collections tools send the same reminder again and again. Unstuck works out *why* an invoice is stuck: a missing PO, a cash crunch, a dispute, the wrong contact, a cheque in the post, or a client who simply forgot. It then fixes that cause with a native PayPal action, within rules the owner sets.
 
 Clients get a private page where they can say what's wrong ("I can do $400 now"). An assistant there can only offer terms the owner has already allowed, and accepting one sets it up in PayPal on the spot.
 
@@ -20,7 +22,7 @@ Invoices don't get stuck for one reason, so another reminder fixes only one of t
 
 ## What Unstuck does differently
 
-There are other AI collections tools, including entries in this hackathon (*Owed*, *Invoice Chaser*). They draft better reminders. Unstuck does three things they don't:
+This is a crowded category, with at least eight entries in this hackathon alone. Most draft better reminders; a few also set up plans or discounts in PayPal. The comparison is in [`research/PHASE_3_COMPETITOR_RECHECK.md`](research/PHASE_3_COMPETITOR_RECHECK.md). Unstuck's combination:
 
 1. **Diagnoses the blocker.** It separates what the client *said* (quoted evidence) from what it *infers*, and states the expected outcome, the risks and the alternatives.
 2. **Executes the remedy as PayPal state, not as an email:**
@@ -35,7 +37,8 @@ There are other AI collections tools, including entries in this hackathon (*Owed
 | Cheque in the post | Payment recorded once the owner confirms it arrived (`POST …/payments`) |
 | Large first-time invoice | Early-payment discount as a PayPal rule that expires on its own (`POST …/conditional-rules`) |
 
-3. **Resolves it with the client.** Every reminder links to a private page. The client can ask questions or propose a plan; the assistant can only surface plans the deterministic policy engine allows. The client sees the consequences in plain words before accepting.
+3. **Resolves it with the client.** Every reminder links to a private page. The client can ask questions or propose a plan; the assistant can only surface plans the deterministic policy engine allows. The client sees the consequences in plain words before accepting, and acceptance is applied in PayPal immediately.
+4. **Follows through to payment.** Installments advance the minimum due as they are paid; missed promises and late installments come back to the agent; nothing counts as "collected" until PayPal reports the money.
 
 > **The agent proposes. Your rules decide what's allowed. PayPal executes. You stay in control.**
 
@@ -63,11 +66,14 @@ Details: [`docs/AI_SYSTEM_DESIGN.md`](docs/AI_SYSTEM_DESIGN.md) · [`docs/PAYPAL
 
 The screenshots were taken in labelled simulation mode with rules-only AI. See *Verification status*.
 
-## Sponsor technology: AG Grid
+## Sponsor technology: AG Grid and AG Studio
 
 - **Receivables board** (AG Grid Community 36): custom React cell renderers (stuck reason, aging, transparent risk, next step), risk-sorted by default, an external filter driven by the reason strip, quick search, pinned totals, CSV export, and change flashing when money moves.
-- **Insights** (AG Studio 3.0): a pre-built receivables report over three live tables (open invoices, agent actions, payments) with KPIs, owed by stuck reason, owed by risk band, and agent actions by rule decision. It includes a ledger, cross-filtering and a self-serve report builder, themed with the product's palette.
+- **Insights** (AG Studio 3.0): a receivables report over five read-only tables (open invoices, agent actions, payments, promises, approvals), themed with the product's palette, with cross-filtering and a self-serve report builder.
+- **Ask Insights** (Studio Agent Framework): a custom agent, *Unstuck Insights*, built with `clientToolRunner`, runs in Studio's AI panel and on the page. It answers questions like "Which customers have the largest outstanding balance?" or "Build a report for invoices requiring human approval" from the data, opens the matching report, and declines questions it has no report for instead of guessing. With a Claude key, Studio's five built-in agents also run, through a server-side Claude adapter. Status and limits: [`qa/AG_STUDIO_SPONSOR_READINESS.md`](qa/AG_STUDIO_SPONSOR_READINESS.md).
 - **Activity log** (AG Grid): every decision and PayPal call, with PayPal debug ids.
+
+![Ask Insights in AG Studio's AI panel](docs/screenshots/11-insights-studio-agent.png)
 
 Hosting: one-click **Render** Blueprint (`render.yaml`).
 
@@ -112,10 +118,10 @@ Full judge walkthrough: [`submission/DEMO_WALKTHROUGH.md`](submission/DEMO_WALKT
 | Command | What it covers | Last result |
 |---|---|---|
 | `npm run lint` | TypeScript strict | ✅ |
-| `npm test` | 59 unit, flow, agent and **adversarial-model** tests, plus the eval as a safety gate | ✅ 59/59 |
-| `npm run build && npm run test:contract` | Live PayPal code path over HTTP against a strict mock PayPal | ✅ 24/24 (97 API calls) |
-| `npm run test:e2e` (with `UNSTUCK_MODE=simulation npm run dev`) | Browser journey incl. AG Studio and mobile | ✅ 17/17 (dev and production) |
-| `npm run eval` | 26-scenario AI evaluation | Rules baseline: 81% reason accuracy, 0 safety violations, 0 fabricated quotes. **Claude: not yet run** |
+| `npm test` | Unit, flow, agent, **adversarial-model**, reliability (stale approvals, auth, currency) and Insights tests, plus the eval as a safety gate | ✅ 90/90 |
+| `npm run build && npm run test:contract` | Live PayPal code path over HTTP against a strict mock PayPal, with owner auth | ✅ 25/25 (97 API calls) |
+| `npm run test:e2e` (against `UNSTUCK_MODE=simulation npm start`) | Browser journey incl. AG Studio questions, the Studio AI panel agent and mobile | ✅ 20/20 (production build) |
+| `npm run eval` | 26-scenario AI evaluation, strict scoring | Rules baseline: 14/26 correct, 12 abstained, 0 forbidden actions, 0 safety violations. **Claude: not yet run** ([report](qa/REAL_AI_EVALUATION_REPORT.md)) |
 
 ## Verification status
 
@@ -128,9 +134,18 @@ Full judge walkthrough: [`submission/DEMO_WALKTHROUGH.md`](submission/DEMO_WALKT
 
 Nothing in this repository claims a real PayPal transaction or a real Claude result until those runs are recorded in `qa/`.
 
+## Security
+
+- The agent proposes; a deterministic policy engine decides. Money changes always need the owner, and the rules are **re-checked against PayPal's current invoice when an approved action runs**, so a stale approval can't fire.
+- Agent-written reminders with links, other payment details or legal language never go out automatically.
+- Sandbox only: production PayPal is refused, including via a base-URL override.
+- The owner console takes a password (`OWNER_BASIC_AUTH`), and **fails closed** in production when PayPal is connected without one. Scheduled runs use their own token (`AGENT_RUN_TOKEN`), which opens only `/api/agent/run`.
+
+Details: [`qa/FINAL_SECURITY_AND_RELIABILITY_REPORT.md`](qa/FINAL_SECURITY_AND_RELIABILITY_REPORT.md) · [`qa/AI_SECURITY_REPORT.md`](qa/AI_SECURITY_REPORT.md)
+
 ## AI disclosure
 
-- **In the product:** Anthropic Claude (`claude-opus-5-5`, Messages API with structured outputs and tool use) for diagnosis and the payer assistant.
+- **In the product:** Anthropic Claude (`claude-opus-5-5`, Messages API with structured outputs and tool use) for diagnosis, the payer assistant and, optionally, AG Studio's built-in Insights agents. The *Unstuck Insights* agent uses no LLM.
 - **In development:** the code and documentation were written with Claude Code (an AI coding assistant) under the owner's direction.
 
 ## Stack

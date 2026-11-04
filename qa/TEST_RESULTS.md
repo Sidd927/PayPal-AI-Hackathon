@@ -31,3 +31,33 @@ _Executed 2026-11-04 in the build container (Node 22.23.4, Chromium via Playwrig
 | 11 | Re-running `test:all` | The contract harness killed `npx` but not its `next-server` grandchild, so a re-run hit the stale server and failed (6/10) | Next is started in its own process group, the whole group is killed, and the run aborts if the port is busy; re-run 23/23 |
 
 _Final run after all fixes: lint ✅ · unit 40/40 ✅ · build ✅ · contract 23/23 ✅ · E2E 14/14 on a fresh production build ✅._
+
+
+## Phase 3 final gates (2026-11-04, final code)
+
+| Gate | Command | Result |
+|---|---|---|
+| Typecheck | `npm run lint` | ✅ |
+| Unit, flow, agent, adversarial, reliability, Insights | `npm test` | ✅ 90/90 (7 files) |
+| Production build | `npm run build` | ✅ |
+| Live code path vs strict mock PayPal (now with owner auth) | `npm run test:contract` | ✅ 25/25, 97 PayPal API calls |
+| Browser journey on the production build | `UNSTUCK_MODE=simulation npm start` then `npm run test:e2e` | ✅ 20/20 (incl. Ask Insights, unsupported question, Studio AI panel agent, no AG Studio fatal errors, no phone overflow) |
+| Dependencies | `npm audit` | ✅ 0 vulnerabilities |
+| AI eval, rules baseline, strict scoring | `npm run eval` | 14/26 correct, 12 abstained, 0 forbidden, 0 safety violations (`qa/REAL_AI_EVALUATION_REPORT.md`) |
+| Widths 390 / 768 / 1440 | screenshot script | No horizontal overflow on console, payer page or activity |
+| Real PayPal sandbox | `npm run check:sandbox` | ⏳ blocked: host unreachable from this environment, no credentials |
+| Real Claude | `npm run eval` with a key | ⏳ blocked: no `ANTHROPIC_API_KEY` |
+
+### Phase 3 defects found and fixed (each with a test)
+
+| # | Defect | Test |
+|---|---|---|
+| 12 | AG Studio first view switch failed (malformed widget sort) | e2e Insights checks; e2e fails on Studio fatal errors |
+| 13 | Stale approvals executed on a changed invoice | `reliability.test.ts` (3, mutation-checked) |
+| 14 | Owner console open with real PayPal in production | `reliability.test.ts`; contract "owner APIs require the owner password" |
+| 15 | Non-constant-time credential compare; malformed Basic header threw | `reliability.test.ts` |
+| 16 | KPIs summed across currencies | `reliability.test.ts`, `insights.test.ts` |
+| 17 | "Recovered" implied causation | wording + tooltip; `reliability.test.ts` (promises never counted) |
+| 18 | Model-written automatic reminders not content-checked | `ai-security.test.ts` (6) |
+| 19 | `PAYPAL_API_BASE` could point at production PayPal | `reliability.test.ts` (3) |
+| 20 | Insights LLM proxy would 413 on Studio's normal payloads | `insights.test.ts` |

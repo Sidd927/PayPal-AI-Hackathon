@@ -27,3 +27,12 @@ Client-authored text is wrapped as data, the system prompts say so, and — more
 - Basic-auth comparison is not constant-time.
 - The payer link is a bearer secret; anyone with it can see that invoice (stated on the page).
 - SQLite file on ephemeral storage when hosted on Render free.
+
+## Phase 3 additions
+
+- **Execution-time re-check:** `executeAction` re-evaluates the rules against PayPal's current invoice before any write. A `block` fails the action; a formerly automatic action that now needs approval returns to the owner. Owner approval never overrides `block`.
+- **Fail-closed owner console:** with `NODE_ENV=production` and real PayPal credentials, the proxy returns 503 until `OWNER_BASIC_AUTH` is set. Credentials are compared in constant time.
+- **Outbound content gate:** agent-written reminders containing a foreign link, another way to pay, an email address or legal or threatening language need the owner.
+- **Sandbox guard:** a production PayPal host in `PAYPAL_API_BASE` is refused.
+
+Full audit: `qa/FINAL_SECURITY_AND_RELIABILITY_REPORT.md`.

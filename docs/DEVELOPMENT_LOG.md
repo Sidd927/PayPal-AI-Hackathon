@@ -49,3 +49,21 @@
   - phone bundle −68%.
 - **Tests:** 59 unit, 24 contract and 17 e2e, all passing.
 - **Still blocked:** real sandbox, real Claude, Render, video. These need the owner's credentials and accounts.
+
+## 2026-11-04: session 1, Phase 3 (final pass)
+
+- **AG Studio Agent Framework:** custom *Unstuck Insights* agent (`clientToolRunner`, primary via `createAiHarness`) in Studio's AI panel and on the page. It answers seven receivables questions from read-only tables, opens the matching report, and declines anything else. Studio's built-in agents run on Claude through a server adapter when a key is set. Found and fixed a malformed widget sort that broke the first view switch.
+- **Security and reliability audit** (`qa/FINAL_SECURITY_AND_RELIABILITY_REPORT.md`), fixes, each with a test:
+  - rules re-checked at execution (stale approvals);
+  - fail-closed owner console;
+  - constant-time auth;
+  - content gate on model-written automatic reminders;
+  - sandbox guard against a production base URL.
+- **Business-outcome correctness:**
+  - single-currency KPIs;
+  - "Collected after Unstuck acted" with a causation caveat;
+  - promises and plans are never collected money.
+- **Eval:** strict scoring (abstention never correct), per-category denominators. Rules baseline: 14/26 correct, 12 abstained, 0 forbidden, 0 unsafe.
+- **Competitors rechecked:** at least eight hackathon entries. Two show real sandbox evidence and hosted demos (`research/PHASE_3_COMPETITOR_RECHECK.md`).
+- **Tests:** 90 unit, 25 contract, 20 e2e (production build), `npm audit` clean.
+- **Still blocked:** real sandbox (host unreachable, no credentials), real Claude (no key), hosting, AG licence key, video. All need the owner.

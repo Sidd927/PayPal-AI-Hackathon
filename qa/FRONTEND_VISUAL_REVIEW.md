@@ -4,7 +4,7 @@
 |---|---|---|---|
 | 1440×1000 | Dashboard after an agent run | `docs/screenshots/02-board-diagnosed.png` | Three questions answered above the fold; risk-sorted grid; trace visible |
 | 1440×1000 | Drawer (Northwind) | `docs/screenshots/03-drawer-northwind.png` | Evidence quote, inference, recommendation and outcome, risks, risk factors |
-| 1440×1000 | Dashboard after a payment | `docs/screenshots/07-board-after.png` | "Recovered after Unstuck acted" reflects $400 |
+| 1440×1000 | Dashboard after a payment | `docs/screenshots/07-board-after.png` | "Collected after Unstuck acted" reflects $400 |
 | 430×932 | Payer page, offers, plan progress | `04`–`06` screenshots | Consequences shown before accepting; plan table after |
 | 390×844 | Dashboard | Playwright check: `scrollWidth − innerWidth = 0` | No horizontal overflow; reasons visible on cards |
 | 820×1180 | Dashboard | Manual screenshot review | Grid usable; Next step column scrolls |

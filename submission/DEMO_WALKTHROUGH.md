@@ -18,8 +18,8 @@ Open <http://localhost:3000>. The demo studio loads automatically, and the heade
 4. Open **Harbor Dental**: the dispute is escalated with a suggested reply, and automatic reminders are paused.
 5. In **Needs you**, approve **Atlas Robotics**' cheque. A confirmation states exactly what PayPal will record before anything happens.
 6. Open **Bluebird Café** → **Open as the client**. Tap *Can I pay part now and the rest later?* → **Accept this plan** → **Simulate payment** ($400).
-7. Back on the console: Bluebird shows *Plan: 1 of 3 paid*, and "Recovered after Unstuck acted" reads $400.
-8. **Insights** (AG Studio): click a slice to cross-filter, or **Build your own report**. **Activity** lists every decision and call. **Your rules** lets you change the limits; for example, set *Most installments* to 2 and ask for a plan again.
+7. Back on the console: Bluebird shows *Plan: 1 of 3 paid*, and "Collected after Unstuck acted" reads $400. Hover it: this is timing, not proof of causation, and promises are never counted.
+8. **Insights** (AG Studio): type a question in **Ask Insights**, e.g. "Which customers have the largest outstanding balance?" or "Build a report for invoices requiring human approval". Then try one it can't answer ("What's the weather?"). Click **Build your own report**, open the AI panel on the right and ask the same questions there: the *Unstuck Insights* agent runs inside AG Studio. Click a chart slice to cross-filter. **Activity** lists every decision and call. **Your rules** lets you change the limits; for example, set *Most installments* to 2 and ask for a plan again.
 9. **Reset demo** restores the scenario.
 
 ## Option B: real PayPal sandbox and Claude
@@ -44,7 +44,7 @@ Open <http://localhost:3000>. The demo studio loads automatically, and the heade
    npm run seed:sandbox
    ```
 
-5. Start the app:
+5. Start the app (with real PayPal credentials, a production build needs an owner password; dev mode does not):
 
    ```bash
    npm run dev

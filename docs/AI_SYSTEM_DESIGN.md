@@ -53,3 +53,10 @@ Every diagnosis (model id, source, error), proposal (decision and checks), appro
 ## Cost controls
 
 `AI_DAILY_CALL_LIMIT`, input-hash caching, prompt caching, bounded `max_tokens`, 60 s timeout with 2 SDK retries. A full board diagnosis is ~7 calls.
+
+## Phase 3: Insights agents (AG Studio)
+
+- **Unstuck Insights** (`src/components/insights/agents.ts`): an AG Studio Agent Framework agent built with `clientToolRunner` and registered as primary with `createAiHarness`. It uses no LLM. A keyword router maps a question to one of seven predefined read-only reports, opens it with `api.setState`, and answers with figures computed from the same tables (`explain()`). Questions it can't map are declined with the list of supported ones.
+- **Studio built-in agents** (lead, planning, data, page, widget): enabled only when Claude is configured. They use `claudeAdapter` (an `AgLlmAdapter`), which posts each turn to `/api/insights/llm`. The server translates Studio's items to Claude messages and tool_use blocks and back, and executes no tools itself.
+- **Data boundary:** both see only `insightsTables()`, primary currency only, with no emails, tokens, messages or PayPal ids.
+- **Evaluation:** strict scoring counts `unknown` as an abstention, never correct; results are reported per category with denominators (`qa/REAL_AI_EVALUATION_REPORT.md`).

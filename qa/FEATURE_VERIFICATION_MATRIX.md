@@ -1,6 +1,6 @@
 # Feature Verification Matrix
 
-_End of Phase 2, 2026-11-04._
+_Updated end of Phase 3, 2026-11-04. Phase 3 rows are at the end of the table._
 
 **Classes:**
 
@@ -42,3 +42,11 @@ _End of Phase 2, 2026-11-04._
 | Email ingestion (Gmail/Outlook) | **5** | roadmap | — |
 | Multi-user accounts / roles | **5** | single owner + optional basic auth | — |
 | Trained payment-delay prediction | **5** | deliberately replaced by a transparent heuristic | — |
+| Execution-time policy re-check (stale approvals refused or returned to owner) | 1 | `reliability.test.ts` | n/a |
+| Owner console fails closed (prod + real PayPal + no password); constant-time auth | 1 | `reliability.test.ts`, contract | n/a |
+| Content gate on agent-written automatic reminders | 1 | `ai-security.test.ts` | n/a |
+| Sandbox-only guard incl. base-URL override | 1 | `reliability.test.ts` | n/a |
+| Single-currency KPIs with exclusion note | 1 | `reliability.test.ts` | n/a |
+| AG Studio: Unstuck Insights agent (clientToolRunner) in the Studio AI panel and on the page | 1 | e2e (production build) | n/a |
+| AG Studio: built-in agents on Claude via server adapter | 2 | `insights.test.ts` (protocol, fake client) | **6** (no key) |
+| AG Studio licence key (no watermark) | 6 | — | owner must request trial key |
