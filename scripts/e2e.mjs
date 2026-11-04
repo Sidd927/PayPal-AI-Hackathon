@@ -85,7 +85,7 @@ try {
   const detail = await json(page, `/api/invoices/${bluebird.id}`);
   const payer = await ctx.newPage();
   await payer.setViewportSize({ width: 430, height: 932 });
-  await payer.goto(detail.data.resolutionUrl, { waitUntil: "networkidle" });
+  await payer.goto(BASE + new URL(detail.data.resolutionUrl).pathname, { waitUntil: "networkidle" });
   await payer.screenshot({ path: path.join(OUT, "04-payer-page.png"), fullPage: true });
   await payer.getByRole("button", { name: "Can I pay part now and the rest later?" }).click();
   await payer.getByRole("button", { name: "Accept this plan" }).first().waitFor({ timeout: 60_000 });

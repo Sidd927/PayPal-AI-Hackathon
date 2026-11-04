@@ -97,6 +97,15 @@ export function Console() {
     return () => clearInterval(t);
   }, [load]);
 
+  // First visit with an empty store: load the demo (simulation) or pull invoices from the sandbox.
+  const autoLoaded = useRef(false);
+  useEffect(() => {
+    if (!snap || autoLoaded.current || snap.rows.length > 0 || busy) return;
+    autoLoaded.current = true;
+    if (snap.mode.paypal === "simulation") run("seed");
+    else if (snap.mode.paypal === "sandbox") run("sync");
+  }, [snap]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const refreshAll = () => {
     setVersion((v) => v + 1);
     load();

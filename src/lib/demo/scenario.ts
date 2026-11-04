@@ -189,3 +189,26 @@ export async function seedScenario(gw: InvoiceGateway, opts: { payerEmail?: stri
   repo.setPolicy({ ...repo.getPolicy(), businessName: BUSINESS.name, ownerName: BUSINESS.owner });
   return ids;
 }
+
+/**
+ * Re-attach the demo conversations to demo invoices after a fresh sync (e.g. a Render free instance restarted
+ * and lost its local disk). Matches invoices by the JC-<number> prefix the seeder uses. Idempotent.
+ */
+export function restoreDemoConversations(invoices: { id: string; number: string | null }[]) {
+  let restored = 0;
+  for (const inv of invoices) {
+    const m = /^JC-(\d{4})(?:-|$)/.exec(inv.number ?? "");
+    const s = m ? SCENARIO.find((x) => x.number === Number(m[1])) : undefined;
+    if (!s || repo.listMessages(inv.id).length > 0 || (!s.messages?.length && !s.remindersDaysAgo?.length)) continue;
+    if (repo.listEvents({ invoiceId: inv.id, limit: 1000 }).some((e) => e.kind === "reminder_sent")) continue;
+    for (const msg of s.messages ?? []) {
+      repo.addMessage({ invoice_id: inv.id, author: msg.author, channel: "email", body: msg.body, created_at: new Date(Date.now() - msg.daysAgo * 86_400_000).toISOString() });
+    }
+    for (const d of s.remindersDaysAgo ?? []) {
+      repo.logEvent({ invoice_id: inv.id, kind: "reminder_sent", actor: "paypal", summary: `PayPal automatic reminder (${d} days ago, before Unstuck)`, data: { historical: true, days_ago: d } });
+    }
+    restored++;
+  }
+  if (restored) repo.setPolicy({ ...repo.getPolicy(), businessName: BUSINESS.name, ownerName: BUSINESS.owner });
+  return restored;
+}

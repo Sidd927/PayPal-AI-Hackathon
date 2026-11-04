@@ -55,6 +55,10 @@ export async function syncFromPayPal() {
   // Payments seen during sync (e.g. a webhook was missed) go through the same path as webhooks.
   const { handleInvoicePaymentUpdate } = await import("./payments");
   for (const id of paidChanged) await handleInvoicePaymentUpdate(id, "sync");
+  if (gw.mode === "live" && process.env.UNSTUCK_DEMO_CONVERSATIONS !== "off") {
+    const { restoreDemoConversations } = await import("../demo/scenario");
+    restoreDemoConversations(invoices.map((i) => ({ id: i.id, number: i.detail.invoice_number ?? null })));
+  }
   repo.logEvent({ kind: "sync", actor: "system", summary: `Synced ${invoices.length} invoices from ${gw.environment === "simulation" ? "the simulation" : "PayPal " + gw.environment}`, data: receipt });
   return { count: invoices.length, receipt };
 }
