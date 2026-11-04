@@ -1,116 +1,97 @@
 # Unstuck
 
-**Find out why an invoice is stuck. Fix it inside PayPal. Keep the client.**
+**Every unpaid invoice has a reason. Unstuck finds it, and resolves it with your client, inside PayPal.**
 
-Unstuck is an AI receivables agent for small businesses that invoice with **PayPal Invoicing**. It reads each overdue invoice, its history and the client's replies. It works out *why* the invoice hasn't been paid, then fixes that cause with a native PayPal action, within rules the owner sets. Clients who can't pay in full get a private page where an assistant can offer only plans the owner has already allowed, and accepting one sets it up in PayPal on the spot.
+Unstuck is an AI receivables agent for small businesses that invoice with **PayPal Invoicing**. Most collections tools send the same reminder again and again. Unstuck works out *why* each invoice is stuck: a missing PO, a cash crunch, a dispute, the wrong contact, a cheque in the post, or a client who simply forgot. It fixes that cause with a native PayPal action, within rules the owner sets.
+
+Clients get a private page where they can say what's wrong ("I can do $400 now"). An assistant there can only offer terms the owner has already allowed, and accepting one sets it up in PayPal on the spot.
 
 Built for the [PayPal AI Hackathon 2026](https://paypalaihackathon.devpost.com/). MIT licensed.
 
-![Owner console after diagnosis](docs/screenshots/02-board-diagnosed.png)
-
----
+![Owner console after an agent run](docs/screenshots/02-board-diagnosed.png)
 
 ## The problem
 
-More than half of US small businesses have unpaid invoices outstanding, averaging **$17,500** each (QuickBooks 2025, n=2,487). **29%** of owners have delayed their own pay because clients paid late (Bluevine, March 2026, n=1,052). Yet only 19% charge late fees, and most freelancers fear losing the client if they chase (Ormsby Street, n=1,002).
+- **56%** of US small businesses have unpaid invoices outstanding. Those that do are owed **$17,500** on average ([QuickBooks 2025](https://quickbooks.intuit.com/r/small-business-data/small-business-late-payments-report-2025/), n=2,487).
+- **29%** of owners have delayed their own pay because clients paid late ([Bluevine, Mar 2026](https://www.bluevine.com/newsroom/late-payment-gap-survey-press-release), n=1,052).
+- Yet only 19% charge late fees, and in a UK survey most freelancers said they fear losing the client if they chase.
 
-Invoices get stuck for **different reasons**:
+Invoices don't get stuck for one reason, so another reminder fixes only one of them. Sources and caveats: [`research/PHASE_2_COMPETITIVE_RESEARCH.md`](research/PHASE_2_COMPETITIVE_RESEARCH.md).
 
-- The client's AP team needs a PO number.
-- Cash is tight this month.
-- The client disputes the work.
-- The invoice reached someone who has left.
-- A cheque is in the post.
-- They simply forgot.
+## What Unstuck does differently
 
-A reminder only fixes the last one, yet it's the only tool most small businesses have.
+There are other AI collections tools, including entries in this hackathon (*Owed*, *Invoice Chaser*). They draft better reminders. Unstuck does three things they don't:
 
-Sources and method notes: [`research/USER_PROBLEM_DISCOVERY.md`](research/USER_PROBLEM_DISCOVERY.md) · [`research/SOURCE_REGISTER.md`](research/SOURCE_REGISTER.md)
+1. **Diagnoses the blocker.** It separates what the client *said* (quoted evidence) from what it *infers*, and states the expected outcome, the risks and the alternatives.
+2. **Executes the remedy as PayPal state, not as an email:**
 
-## What Unstuck does
-
-| Why it's stuck | What Unstuck does, in PayPal |
+| Why it's stuck | What happens in PayPal |
 |---|---|
-| Missing PO / AP details | Adds the PO to the invoice, CCs the AP inbox, PayPal re-sends it (`PUT /v2/invoicing/invoices/{id}`) |
-| Cash is tight | Offers a payment plan within your rules, then turns on partial payments with the right minimum due (`PUT …` `partial_payment`) and moves the minimum as installments arrive |
-| Slipped their mind | A short, specific reminder in your voice, delivered by PayPal (`POST …/remind`), sent automatically within your limits |
-| Sent to the wrong person | Reminder to the new contact, after you confirm the address |
-| Disputing the work | Pauses PayPal's automatic reminders (`POST …/cancel-reminders`), flags it for you with a suggested reply. No pressure |
-| Says it's paid | Records the cheque or transfer once you confirm it arrived (`POST …/payments`) |
-| Large, first-time invoice | Suggests a small early-payment discount as a PayPal rule that expires on its own (`POST …/conditional-rules`) |
+| Missing PO / AP details | Invoice updated with the PO; AP inbox CC'd; PayPal re-sends it (`PUT /v2/invoicing/invoices/{id}`) |
+| Cash is tight | Payment plan: partial payments with a minimum due that moves as each installment arrives (`PUT …` `partial_payment`, then webhooks) |
+| Slipped their mind | A short reminder in the owner's voice, delivered by PayPal (`POST …/remind`), automatic within the owner's limits |
+| Wrong contact | Reminder to the new address, after owner approval |
+| Disputing the work | PayPal's automatic reminders paused (`POST …/cancel-reminders`); owner gets the evidence and a suggested reply |
+| Cheque in the post | Payment recorded once the owner confirms it arrived (`POST …/payments`) |
+| Large first-time invoice | Early-payment discount as a PayPal rule that expires on its own (`POST …/conditional-rules`) |
 
-**The agent proposes. The policy engine decides what's allowed. PayPal executes. You stay in control.**
+3. **Resolves it with the client.** Every reminder links to a private page. The client can ask questions or propose a plan; the assistant can only surface plans the deterministic policy engine allows. The client sees the consequences in plain words before accepting.
 
-## How it works
+> **The agent proposes. Your rules decide what's allowed. PayPal executes. You stay in control.**
 
-```mermaid
-flowchart LR
-  A[PayPal invoices\n+ client replies] --> B[Claude diagnosis\nstructured output]
-  B --> C[Typed action\nbuilt in code]
-  C --> D{Policy engine}
-  D -->|auto| E[PayPal API]
-  D -->|approve| F[You: one tap] --> E
-  D -->|block| G[Explained, never sent]
-  H[Client on payment page] --> I[Payer assistant\nstrict tools] --> D
-  E -.->|signed webhook| J[Verify → re-fetch →\nadvance plan]
+## How the agent works
+
+**Run the agent** performs one observable pass, and every step is shown live:
+
+```
+Sync from PayPal → prioritise by risk → for each invoice:
+  gather evidence → diagnose (Claude) → plan → check your rules → act or ask → verify in PayPal
+plus follow-ups: installments coming due, missed promises
 ```
 
-1. **Sync** pulls invoices from PayPal Invoicing.
-2. **Diagnose**: Claude (`claude-opus-5-5`, structured outputs) reads invoice facts, payment history and client messages, and returns a reason from a fixed taxonomy, with evidence quotes, a confidence score and a recommended action.
-3. **Build in code**: server code turns the recommendation into a typed action. Plan maths, discount caps, validated PO numbers and emails all come from code, and the payment-page link is appended by code.
-4. **Policy**: every action is evaluated (`auto` / `approve` / `block`) with itemised checks you can read on the card.
-5. **Execute**: approved actions call PayPal with `PayPal-Request-Id` idempotency. Receipts (HTTP status, `paypal-debug-id`) go into the audit log.
-6. **Payer page**: every reminder links to a private page. Clients can pay with PayPal, or ask the assistant for a plan. The assistant can only *request* plans from the policy engine, and the client must click **Accept this plan**.
-7. **Webhooks**: `INVOICING.INVOICE.PAID` is verified with PayPal, deduplicated, and triggers a re-fetch. Plans advance automatically.
+- **Diagnosis:** Claude (`claude-opus-5-5`) with structured outputs, sanitised, and turned into typed actions *by code*. Plan maths, discount caps, PO and email validation, and links are never taken from the model.
+- **Policy engine:** a pure function that classifies every action as *auto* / *needs approval* / *blocked*, with itemised checks shown on each card. Money changes proposed by the agent always need the owner.
+- **Risk:** a transparent heuristic, not a trained model. Every point comes from a named factor, shown in the drawer.
+- **30-day outlook:** grouped by *why* money is expected (agreed plan, promise, payment in transit, coming due); no invented probabilities.
+- **Payer assistant:** a tool loop with four strict tools and no ability to change amounts.
 
-## Screens
+Details: [`docs/AI_SYSTEM_DESIGN.md`](docs/AI_SYSTEM_DESIGN.md) · [`docs/PAYPAL_INTEGRATION.md`](docs/PAYPAL_INTEGRATION.md) · [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 
-| Owner: invoice drawer | Client: payment page | Client: plan in progress |
+| Invoice diagnosis | Client page: options with consequences | AG Studio insights |
 |---|---|---|
-| ![](docs/screenshots/03-drawer-northwind.png) | ![](docs/screenshots/05-payer-offers.png) | ![](docs/screenshots/06-payer-plan-progress.png) |
+| ![](docs/screenshots/03-drawer-northwind.png) | ![](docs/screenshots/05-payer-offers.png) | ![](docs/screenshots/10-insights-ag-studio.png) |
 
-The screenshots were taken in simulation mode. See *Modes* below.
+The screenshots were taken in labelled simulation mode with rules-only AI. See *Verification status*.
 
-## PayPal integration
+## Sponsor technology: AG Grid
 
-Built on **PayPal Invoicing v2**. Ten operations are used: OAuth2, list/get, `remind`, full-replacement `PUT` (partial payments, minimum due, reference, CC), `conditional-rules`, `payments`, `cancel-reminders`, create/send (seeding), webhook verification and webhook registration. Request shapes follow PayPal's own [Agent Toolkit](https://www.npmjs.com/package/@paypal/agent-toolkit) 1.11.0. Details: [`docs/PAYPAL_INTEGRATION.md`](docs/PAYPAL_INTEGRATION.md).
+- **Receivables board** (AG Grid Community 36): custom React cell renderers (stuck reason, aging, transparent risk, next step), risk-sorted by default, an external filter driven by the reason strip, quick search, pinned totals, CSV export, and change flashing when money moves.
+- **Insights** (AG Studio 3.0): a pre-built receivables report over three live tables (open invoices, agent actions, payments) with KPIs, owed by stuck reason, owed by risk band, and agent actions by rule decision. It includes a ledger, cross-filtering and a self-serve report builder, themed with the product's palette.
+- **Activity log** (AG Grid): every decision and PayPal call, with PayPal debug ids.
 
-## AI
-
-- **Diagnosis agent**: Claude structured outputs, sanitised, converted to actions in code, policy-gated, with a rules-only fallback.
-- **Payer agent**: a tool loop with four strict tools (`get_payment_options`, `propose_payment_plan`, `record_promise_to_pay`, `send_to_owner`). It has no tools that change money, so it has nothing to misuse.
-- Prompt-injection posture, approval matrix, audit trail and cost controls: [`docs/AI_SYSTEM_DESIGN.md`](docs/AI_SYSTEM_DESIGN.md).
-
-## Sponsor technology
-
-- **AG Grid** (Community, v36) powers the receivables board and the activity log. It uses custom React cell renderers (reason phrases, aging, plan progress, next step), an external filter driven by the reason strip, quick-filter search, a pinned totals row, stable row ids with change flashing, tooltips, and wrapped auto-height audit rows.
-- **Render**: a one-click Blueprint (`render.yaml`) with a health check.
+Hosting: one-click **Render** Blueprint (`render.yaml`).
 
 ## Run it
 
-**Requirements:** Node 20.9 or later (22 recommended).
+Requires Node 20.9 or later (22 recommended).
 
 ```bash
 npm install
+```
+
+```bash
 npm run dev
 ```
 
-Open <http://localhost:3000>. With no credentials, Unstuck starts in **simulation** and loads a demo studio with seven stuck invoices.
+Open <http://localhost:3000>. With no keys, a demo studio with seven stuck invoices loads in **labelled simulation** with **rules-only** AI. No PayPal calls are made.
 
-### Modes
-
-| | No keys | With keys |
-|---|---|---|
-| PayPal | **Simulation**: a local stand-in that follows the Invoicing contract. Labelled "Simulation, not PayPal" everywhere, and no PayPal calls are made | **PayPal sandbox**: real invoices, real reminders, real partial payments |
-| AI | **Rules only**: keyword heuristics and templates, labelled | **Claude** diagnosis and payer assistant |
-
-### Connect the PayPal sandbox and Claude
+To connect the PayPal sandbox and Claude:
 
 ```bash
 cp .env.example .env.local
 ```
 
-Fill in `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `DEMO_PAYER_EMAIL` and `ANTHROPIC_API_KEY`, then:
+Set `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `DEMO_PAYER_EMAIL` and `ANTHROPIC_API_KEY`, then:
 
 ```bash
 npm run check:sandbox
@@ -124,83 +105,41 @@ npm run seed:sandbox
 npm run dev
 ```
 
-The seeder creates 12 real sandbox invoices. For webhooks, see [`docs/PAYPAL_INTEGRATION.md`](docs/PAYPAL_INTEGRATION.md#sandbox-setup). Without them, use **Sync with PayPal** after paying.
-
-### Environment variables
-
-Documented in [`.env.example`](.env.example). The key ones are `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, `DEMO_PAYER_EMAIL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `APP_BASE_URL` and `OWNER_BASIC_AUTH`.
+Full judge walkthrough: [`submission/DEMO_WALKTHROUGH.md`](submission/DEMO_WALKTHROUGH.md). Sandbox test plan: [`qa/REAL_PAYPAL_SANDBOX_REPORT.md`](qa/REAL_PAYPAL_SANDBOX_REPORT.md).
 
 ## Tests
 
-```bash
-npm run lint
-```
+| Command | What it covers | Last result |
+|---|---|---|
+| `npm run lint` | TypeScript strict | ✅ |
+| `npm test` | 59 unit, flow, agent and **adversarial-model** tests, plus the eval as a safety gate | ✅ 59/59 |
+| `npm run build && npm run test:contract` | Live PayPal code path over HTTP against a strict mock PayPal | ✅ 24/24 (97 API calls) |
+| `npm run test:e2e` (with `UNSTUCK_MODE=simulation npm run dev`) | Browser journey incl. AG Studio and mobile | ✅ 17/17 (dev and production) |
+| `npm run eval` | 26-scenario AI evaluation | Rules baseline: 81% reason accuracy, 0 safety violations, 0 fabricated quotes. **Claude: not yet run** |
 
-```bash
-npm test
-```
+## Verification status
 
-```bash
-npm run build && npm run test:contract
-```
-
-```bash
-UNSTUCK_MODE=simulation npm run dev
-```
-
-Then, in a second terminal:
-
-```bash
-npm run test:e2e
-```
-
-- `npm run lint`: TypeScript, strict.
-- `npm test`: 40 unit and flow tests (policy, PayPal client, AI paths with a scripted model).
-- `npm run test:contract`: 23 checks of the live PayPal code path against a strict mock PayPal over HTTP.
-- `npm run test:e2e`: 14 browser checks of the full journey.
-
-Latest results: [`qa/TEST_RESULTS.md`](qa/TEST_RESULTS.md).
-
-## Deploy
-
-Render: **New → Blueprint** → this repo → fill in the secrets. Docker: see [`docs/DEPLOYMENT_ARCHITECTURE.md`](docs/DEPLOYMENT_ARCHITECTURE.md).
-
-## Architecture and docs
-
-| | |
+| | Status |
 |---|---|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Components, data flow, decisions |
-| [`docs/API_SPECIFICATION.md`](docs/API_SPECIFICATION.md) | Every endpoint and action type |
-| [`docs/DATABASE_DESIGN.md`](docs/DATABASE_DESIGN.md) | Schema |
-| [`docs/SECURITY_DESIGN.md`](docs/SECURITY_DESIGN.md) | Threat model and controls |
-| [`research/`](research/) | Hackathon research, idea scoring (15 ideas), problem statement, product requirements |
+| Full journey in simulation | ✅ Verified (browser E2E) |
+| Live PayPal code path | ✅ Verified against a strict mock; ⏳ **real sandbox pending.** The build environment cannot reach `api-m.sandbox.paypal.com` and had no credentials |
+| Claude diagnosis and payer assistant | ✅ Pipeline verified with a scripted model; ⏳ **real Claude pending** (no key) |
+| Hosted demo | ⏳ Render Blueprint ready; needs the owner's account |
 
-**Stack:** Next.js 16 · React 19 · TypeScript · Tailwind CSS 4 · AG Grid 36 · SQLite (better-sqlite3) · Anthropic SDK · PayPal REST (Invoicing v2, Webhooks) · Vitest · Playwright.
+Nothing in this repository claims a real PayPal transaction or a real Claude result until those runs are recorded in `qa/`.
 
-## Security
+## AI disclosure
 
-- Secrets are read from environment variables only.
-- Every money change passes a deterministic policy, uses integer cents, and is re-checked against PayPal's current state before execution.
-- Writes are idempotent.
-- Webhooks are signature-verified and deduplicated.
-- The payer page uses a 144-bit token.
-- CSRF checks run on every owner mutation.
-- The app runs against the sandbox only.
+- **In the product:** Anthropic Claude (`claude-opus-5-5`, Messages API with structured outputs and tool use) for diagnosis and the payer assistant.
+- **In development:** the code and documentation were written with Claude Code (an AI coding assistant) under the owner's direction.
 
-More in [`qa/SECURITY_AUDIT.md`](qa/SECURITY_AUDIT.md).
+## Stack
 
-## Honest status
+Next.js 16 · React 19 · TypeScript · Tailwind CSS 4 · AG Grid 36 · AG Studio 3 · SQLite (better-sqlite3) · Anthropic SDK · PayPal REST (Invoicing v2, Webhooks) · Vitest · Playwright · Render
 
-- ✅ Verified in this repo: the full journey in simulation (browser E2E), and the live PayPal code path against a strict mock (contract test).
-- ⏳ Pending: a run against the real PayPal sandbox and real Claude. The build environment could not reach `api-m.sandbox.paypal.com` and had no keys. The steps above take about five minutes with credentials.
+## Docs
 
-## Roadmap
-
-- Per-client learning: which remedy works for which reason.
-- Recurring invoices and failed subscription renewals.
-- An MCP server exposing the policy-gated tools to any agent.
-- Agent-to-agent settlement with clients' AP agents.
-- Multi-user accounts.
+[`docs/`](docs/) (architecture, API, data, AI, PayPal, security, deployment, design system) · [`qa/`](qa/) (audits, test results, AI evaluation, judge simulation) · [`research/`](research/) (problem, competitors, positioning, sponsor strategy) · [`submission/`](submission/)
 
 ## Licence
 

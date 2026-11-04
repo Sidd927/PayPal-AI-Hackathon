@@ -1,87 +1,90 @@
 # Devpost Description: Unstuck
 
-**Tagline (≤ 200 chars):** An AI receivables agent for PayPal Invoicing. It works out why each invoice is unpaid and fixes that cause with native PayPal actions, within rules the owner sets.
+**Tagline (≤ 200 chars):** Every unpaid invoice has a reason. Unstuck finds it — and resolves it with your client, inside PayPal.
 
-**Built with:** paypal-invoicing-api, paypal-webhooks, claude, anthropic-sdk, next.js, react, typescript, tailwindcss, ag-grid, sqlite, render, vitest, playwright
+**Built with:** paypal-invoicing-api, paypal-webhooks, claude, anthropic-sdk, ag-grid, ag-studio, next.js, react, typescript, tailwindcss, sqlite, render, vitest, playwright
+
+**AI tools used:**
+- *In the product:* Anthropic Claude (`claude-opus-5-5`) via the Anthropic SDK, with structured outputs for diagnosis and tool use for the client-facing assistant.
+- *In development:* Claude Code, an AI coding assistant, wrote much of the code and documentation under our direction.
 
 ---
 
 ## Inspiration
 
-Small service businesses do the work, send a PayPal invoice, and then wait. Over half of US small businesses have unpaid invoices outstanding, averaging $17,500 (QuickBooks, 2025). Almost three in ten owners have delayed their own pay because a client paid late (Bluevine, 2026). Most freelancers say they avoid chasing because they're afraid of losing the client.
+Small service businesses do the work, send a PayPal invoice, and wait. More than half of US small businesses have unpaid invoices, and those that do are owed $17,500 on average (QuickBooks, 2025). About three in ten owners have delayed their own pay because of it (Bluevine, 2026).
 
-When we looked closely, invoices weren't stuck for one reason. They were stuck for several:
+When we looked at real reasons, invoices weren't stuck for one reason but for many:
 
-- The client's AP team needed a PO number.
-- The client was short on cash this month.
-- The client disputed the work.
-- The invoice went to someone who had left the company.
-- A cheque was in the post.
-- Or they simply forgot.
+- an AP team needing a PO number;
+- a client short on cash this month;
+- a dispute about the work;
+- an invoice sent to someone who had left;
+- a cheque in the post;
+- a client who forgot.
 
-The only tool most small businesses have, another reminder, fixes only the last one.
-
-Meanwhile, nearly everything in agentic commerce helps an agent **spend**. We wanted to build the agent that helps a small business **get paid**.
+Every tool we found, including AI ones, answers all of these with a better-written reminder.
 
 ## What it does
 
-Unstuck connects to a business's PayPal invoices and does three things.
+Unstuck is an AI receivables agent for PayPal Invoicing. Press **Run the agent** and you watch it work through every invoice:
 
-1. **Diagnoses why each invoice is stuck.** Claude reads the invoice, the client's payment history and their replies, then names the reason with quoted evidence and a confidence score. Seven open invoices can be stuck for six different reasons, and the board shows each reason in plain words.
-2. **Fixes the cause with PayPal itself.**
-   - Missing PO: the invoice is updated with the PO and the AP inbox is CC'd.
-   - Cash flow: a payment plan is set up with partial payments and a moving minimum due.
-   - Forgotten: a short, specific reminder in the owner's voice, delivered by PayPal.
-   - Dispute: PayPal's automatic reminders are paused and the owner gets a suggested reply.
-   - Cheque in the post: the payment is recorded once the owner confirms it arrived.
-   - Large first-time invoice: an early-payment discount, set as a PayPal rule that expires on its own.
-3. **Gives the client a dignified way out.** Every reminder links to a private page. There, the client can pay with PayPal or tell an assistant "I can do $400 now". The assistant can only offer plans the owner has already allowed. One click applies the plan in PayPal, and each installment payment moves the plan forward automatically through verified webhooks.
+1. It syncs with PayPal and ranks invoices by a transparent risk score.
+2. It diagnoses why each invoice is stuck, separating quoted evidence from inference.
+3. It applies the remedy that matches the cause, as a **PayPal action**, within your rules:
+   - add the PO and re-send to AP;
+   - set up a payment plan with partial payments and a moving minimum due;
+   - send a reason-specific reminder;
+   - pause reminders during a dispute;
+   - record a cheque once it arrives;
+   - add an early-payment discount.
+4. Anything that changes money waits for your one-tap approval. Each card shows the exact PayPal change and the rule checks behind it.
 
-The owner sets the rules: how many reminders, how many installments, the minimum first payment, the maximum discount. Anything that changes money waits for a one-tap approval, and every card shows the policy checks behind its decision.
+Every reminder links the client to a **private resolution page**. Clients who can't pay in full can say so. An assistant can only offer plans your rules already allow, the client sees the consequences in plain words before accepting, and acceptance switches the PayPal invoice to partial payments immediately. Each installment paid on PayPal arrives by verified webhook, and the plan moves on by itself.
+
+**Insights**, built with AG Studio, shows owed by stuck reason and risk, plus what the agent did and why.
 
 ## How we built it
 
-- **PayPal Invoicing v2** is the backbone. Unstuck uses OAuth2, list/get, `remind`, full-replacement `PUT` (partial payments, minimum due, reference, additional recipients), `conditional-rules`, `payments`, `cancel-reminders`, create/send, and webhook verification and registration.
-  - PayPal's server SDK doesn't cover Invoicing, so we wrote a small typed client. It caches tokens, sets `PayPal-Request-Id` on every write, retries safely and records `paypal-debug-id`s.
-  - We matched request shapes against the source of PayPal's own Agent Toolkit.
-- **Claude** (`claude-opus-5-5` via the Anthropic SDK) plays two roles:
-  - a diagnosis agent using **structured outputs**;
-  - a client-facing assistant using a **tool loop** with four strict tools.
-- **A deterministic policy engine** sits between the AI and PayPal.
-  - Model output is sanitised.
-  - Plans and discounts are computed in integer cents by code.
-  - Every action is classified *auto*, *needs approval* or *blocked* before anything touches PayPal.
-- **Next.js 16 / React 19 / Tailwind 4** for the app, **AG Grid** for the receivables board and audit log, **SQLite** for Unstuck's own state, and **Render** for hosting.
+- **PayPal Invoicing v2 and Webhooks** are the backbone. Unstuck uses list/get, remind, full-replacement update (partial payments, minimum due, reference, CC), conditional rules, record payment, cancel reminders, create/send, and webhook verification and registration.
+  - Request shapes follow PayPal's own Agent Toolkit source.
+  - Every write carries an idempotency key.
+  - Webhooks are verified, deduplicated and treated as signals: we always re-read the invoice.
+- **Claude** acts as:
+  - a diagnosis agent using structured outputs;
+  - a client-facing assistant using a tool loop with four strict tools.
+- **A deterministic policy engine** between AI and PayPal. The model never supplies amounts, links or recipients that go out unchecked, and agent-proposed money changes always require the owner.
+- **Next.js 16 / React 19 / Tailwind 4** for the app. **AG Grid** powers the risk-sorted receivables board and the audit log; **AG Studio** powers the Insights report. **SQLite** stores state and **Render** hosts it.
 
-## Challenges we ran into
+## Challenges
 
-- **The invoice update is a full replacement.** One missing field would silently damage a client's invoice. Every change is GET → strip read-only fields → mutate → PUT. We tested it against a strict mock that rejects read-only fields and missing items.
-- **`INVOICING.INVOICE.PAID` fires for partial and pending payments too.** We treat webhooks as signals, never as data: verify, dedupe, re-fetch the invoice, then advance the plan. A sync path covers missed webhooks.
-- **Letting an AI negotiate money safely.** The payer assistant has no tool that changes amounts. It can only ask the policy engine for a plan, and nothing happens until the client clicks Accept. We tested this with a scripted prompt-injection attempt.
-- **Our build environment couldn't reach the PayPal sandbox.** So we built a stateful mock of the Invoicing and Webhooks APIs, ran the whole app against it over HTTP (23 checks, 84 API calls), and kept a clearly labelled simulation mode for anyone without credentials.
+- **The PayPal invoice update replaces the whole invoice.** We GET, strip read-only fields, change one thing, and PUT, all proven against a strict mock that rejects read-only fields.
+- **Letting an AI talk money with a client safely.** The assistant can only ask the rules engine for a plan; nothing happens until the client clicks Accept.
+- **Proving safety rather than asserting it.** We wrote tests where a *compromised model* tries to mark invoices paid, grant a 90% discount, inject instructions through a "PO number", or redirect reminders. Each is stopped by code. The tests also caught a real defect we then fixed.
+- **Our build environment couldn't reach the PayPal sandbox**, so we built a strict PayPal mock and ran the full app against it over HTTP (24 checks, 97 API calls). The live sandbox run is documented step by step.
 
-## Accomplishments we're proud of
+## Accomplishments
 
-- Every AI decision ends in a **real PayPal state change** or an explicit, explained refusal, never just a nicer email.
-- A client-facing agent that **negotiates within bounds**: agentic commerce on the seller's side.
-- 40 unit/flow tests, 23 contract checks and 14 browser end-to-end checks, all passing.
+- An observable agent: every step it takes, and why, is on screen.
+- Remedies executed as PayPal state, not drafts.
+- Two-sided resolution: the client is part of the fix.
+- 59 unit/agent/adversarial tests, 24 contract checks, 17 browser checks, and a 26-scenario AI evaluation (rules baseline: 81% reason accuracy, zero safety violations).
 
 ## What we learned
 
-The hard part of getting paid isn't the reminder; it's the conversation. AI is good at reading the conversation. Code is good at doing the maths. PayPal already has the primitives (partial payments, discounts, reminders) that small businesses rarely set up by hand. Putting the three together is what makes it work.
+The hard part of getting paid isn't the reminder; it's finding out what's actually in the way, and making the fix easy for both sides.
 
-## What's next for Unstuck
+## What's next
 
-- Learn which remedy works for which reason and client.
-- Recurring invoices and failed subscription renewals.
-- Expose the policy-gated tools as an MCP server.
-- Agent-to-agent settlement with clients' AP agents.
-- Distribution as an add-on for PayPal Invoicing users.
+- Run the Claude evaluation and publish it.
+- Email-forwarding inbox.
+- Learn which remedies work for which reasons.
+- Expose the policy-gated actions as an MCP server, so a client's AP agent can settle through the same rules.
 
 ## Try it
 
 - **Code:** https://github.com/Sidd927/PayPal-AI-Hackathon (MIT)
-- **Hosted demo:** _add the Render URL after deploy_
-- **Video:** _add the YouTube URL_
-- **Locally, no keys:** `npm install && npm run dev`. This opens a labelled simulation with seven stuck invoices.
-- **Locally, with PayPal sandbox and Claude:** see the README. `npm run seed:sandbox` creates the demo invoices in your sandbox.
+- **Demo:** _Render URL_ (owner console behind basic auth; credentials in the testing instructions)
+- **Video:** _YouTube URL_
+- **Local, no keys:** `npm install && npm run dev` (labelled simulation)
+- **Local with the PayPal sandbox and Claude:** README → "Run it"

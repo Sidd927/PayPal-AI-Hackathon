@@ -1,5 +1,7 @@
 # Competitive Differentiation
 
+> **Correction (Phase 2, 2026-11-04):** this Phase 1 document says no entrant in this hackathon works on seller receivables. That was wrong: *Owed*, *Invoice Chaser* and *paypal-bill-agent* do. See `research/PHASE_2_COMPETITIVE_RESEARCH.md` for the corrected analysis and how Unstuck differs.
+
 | Capability | PayPal reminders | QuickBooks/Xero | Chaser/Upflow | AI-native AR (Paraglide, Daylit) | **Unstuck** |
 |---|---|---|---|---|---|
 | Built for 1–10 person businesses | ✓ | ~ | ✗ | ✗ | ✓ |

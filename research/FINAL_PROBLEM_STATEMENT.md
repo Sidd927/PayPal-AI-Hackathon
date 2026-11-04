@@ -1,5 +1,7 @@
 # Final Problem Statement
 
+> **Correction (Phase 2, 2026-11-04):** this Phase 1 document says no entrant in this hackathon works on seller receivables. That was wrong: *Owed*, *Invoice Chaser* and *paypal-bill-agent* do. See `research/PHASE_2_COMPETITIVE_RESEARCH.md` for the corrected analysis and how Unstuck differs.
+
 **Small service businesses do the work, send a PayPal invoice — and then wait. More than half of US small businesses have unpaid invoices outstanding, averaging $17,500 each.¹ The tools they have can only send the same reminder again, but invoices get stuck for different reasons, and the owners most affected are the ones least willing to push.**
 
 ## Who

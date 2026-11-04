@@ -1,5 +1,7 @@
 # Competitors and Existing Solutions
 
+> **Correction (Phase 2, 2026-11-04):** this Phase 1 document says no entrant in this hackathon works on seller receivables. That was wrong: *Owed*, *Invoice Chaser* and *paypal-bill-agent* do. See `research/PHASE_2_COMPETITIVE_RESEARCH.md` for the corrected analysis and how Unstuck differs.
+
 _2026-11-04._
 
 ## A. What other entrants in this hackathon are building (public repos found via search)

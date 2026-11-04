@@ -1,5 +1,7 @@
 # Idea Evaluation
 
+> **Correction (Phase 2, 2026-11-04):** this Phase 1 document says no entrant in this hackathon works on seller receivables. That was wrong: *Owed*, *Invoice Chaser* and *paypal-bill-agent* do. See `research/PHASE_2_COMPETITIVE_RESEARCH.md` for the corrected analysis and how Unstuck differs.
+
 _2026-11-04. Weights: Problem 15 · PayPal 15 · AI 15 · Innovation 15 · Impact 10 · Feasibility 10 · Demo 10 · Sponsor 5 · Commercial 5 = 100._
 
 Penalties were applied for crowding in **this** hackathon (see `COMPETITOR_AND_EXISTING_SOLUTIONS.md` §A), superficial PayPal use, and dependency on APIs we can't access in sandbox.

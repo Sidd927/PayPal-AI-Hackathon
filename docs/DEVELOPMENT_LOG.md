@@ -29,3 +29,23 @@
 1. Sandbox + Anthropic credentials; allow-list the sandbox hosts or run locally; `npm run check:sandbox && npm run seed:sandbox`; walk through Option B.
 2. Render deploy; make the repo public.
 3. Record the video.
+
+## 2026-11-04: session 1, Phase 2 (audit and evolution)
+
+- **Audit:** git, code, tests and UI re-inspected; 11 defects found (see `qa/PHASE_2_FINAL_AUDIT.md`). Phase 1's claim of no competing receivables entries was false and is corrected everywhere.
+- **Attribution:** commits now use the verified owner identity `Sidd_927 <212080526+Sidd927@users.noreply.github.com>`; the environment's Claude signing disabled for this repo; no AI trailers. History unchanged.
+- **Product:** repositioned as two-sided invoice resolution. Added:
+  - an observable agent run with follow-ups;
+  - diagnosis v2;
+  - a transparent risk score and 30-day outlook;
+  - a dashboard redesign with mobile cards;
+  - confirmations and toasts;
+  - AG Studio Insights.
+- **Quality:**
+  - 26-scenario AI evaluation harness (rules baseline measured);
+  - adversarial-model tests;
+  - contract test extended to the agent run;
+  - dev-server reload loop fixed;
+  - phone bundle −68%.
+- **Tests:** 59 unit, 24 contract and 17 e2e, all passing.
+- **Still blocked:** real sandbox, real Claude, Render, video. These need the owner's credentials and accounts.
