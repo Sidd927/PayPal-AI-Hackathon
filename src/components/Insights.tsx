@@ -1,8 +1,11 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgStudio } from "ag-studio-react";
-import { AgStudioLicenseManager, type AgReportState, studioTheme } from "ag-studio";
+import { AgStudioAiModule, AgStudioLicenseManager, type AgStudioApi, studioTheme } from "ag-studio";
+import type { InsightsTables } from "@/lib/services/insights";
 import { api } from "@/lib/client";
+import { dataSources, INITIAL_REPORT, PROMPT_STARTERS, routeQuestion, VIEWS, explain } from "./insights/report";
+import { buildHarness, openView } from "./insights/agents";
 import { Spinner } from "./ui";
 
 const key = process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY;
@@ -24,101 +27,83 @@ const theme = studioTheme.withParams({
   chartPaletteFills8Color: "#a9a395",
 });
 
-const FIELD_NAMES: Record<string, Record<string, string>> = {
-  invoices: { client: "Client", number: "Invoice", status: "Status", stuck_reason: "Stuck reason", risk_band: "Risk band", risk_score: "Risk score", days_overdue: "Days overdue", amount_due: "Amount due", amount_paid: "Paid", total: "Total", next_step: "Next step", invoice_id: "Invoice id" },
-  actions: { action_id: "Action id", client: "Client", action: "Action", proposed_by: "Proposed by", rule_decision: "Rule decision", status: "Status", created: "Date" },
-  payments: { client: "Client", amount: "Amount", date: "Date", source: "Source" },
-};
-const CURRENCY = new Set(["amount_due", "amount_paid", "total", "amount"]);
-const INTEGER = new Set(["risk_score", "days_overdue"]);
-const fieldsFor = (table: string) =>
-  Object.entries(FIELD_NAMES[table]!).map(([id, name]) => ({
-    id,
-    name,
-    format: CURRENCY.has(id) ? "currencyFormat" : INTEGER.has(id) ? "integerFormat" : "textFormat",
-    ...(CURRENCY.has(id) ? { formatOptions: { format: new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }) } } : {}),
-    ...(id.endsWith("_id") ? { hide: true } : {}),
-  }));
-
-type Data = { invoices: Record<string, unknown>[]; actions: Record<string, unknown>[]; payments: Record<string, unknown>[] };
-
-const f = (id: string, aggregation?: "sum" | "count" | "countd" | "avg" | "max") => ({ id, ...(aggregation ? { aggregation } : {}) });
-const title = (text: string) => ({ title: { enabled: true, text } });
-
-/** The pre-built receivables report. Owners can switch to edit mode and build their own. */
-const REPORT = {
-  selectedPageId: "receivables",
-  pages: [
-    {
-      id: "receivables",
-      layout: { columns: 12, rowHeight: 56 },
-      widgets: {
-        owed: { type: "value", format: title("Still owed"), dataMapping: { value: [f("invoices.amount_due", "sum")] } },
-        overdue: { type: "value", format: title("Avg days late"), dataMapping: { value: [f("invoices.days_overdue", "avg")] } },
-        collected: { type: "value", format: title("Collected"), dataMapping: { value: [f("payments.amount", "sum")] } },
-        actions: { type: "value", format: title("Agent actions"), dataMapping: { value: [f("actions.action_id", "count")] } },
-        byReason: { type: "donut-chart", format: title("Owed by stuck reason"), dataMapping: { categoryKey: [f("invoices.stuck_reason")], valueKey: [f("invoices.amount_due", "sum")] } },
-        byRisk: {
-          type: "column-chart-stacked",
-          format: title("Owed by risk band"),
-          dataMapping: { categoryKey: [f("invoices.risk_band")], valueKey: [f("invoices.amount_due", "sum")], legendKey: [f("invoices.stuck_reason")] },
-        },
-        decisions: {
-          type: "bar-chart-stacked",
-          format: title("What the agent did, by rule decision"),
-          dataMapping: { categoryKey: [f("actions.action")], valueKey: [f("actions.action_id", "count")], legendKey: [f("actions.rule_decision")] },
-        },
-        ledger: {
-          type: "grid",
-          format: title("Receivables ledger"),
-          dataMapping: {
-            cols: [f("invoices.client"), f("invoices.number"), f("invoices.stuck_reason"), f("invoices.risk_score"), f("invoices.days_overdue"), f("invoices.amount_due"), f("invoices.next_step")],
-          },
-        },
-      },
-      widgetLayout: {
-        owed: { xTrack: 0, yTrack: 0, xSpan: 3, ySpan: 2 },
-        overdue: { xTrack: 3, yTrack: 0, xSpan: 3, ySpan: 2 },
-        collected: { xTrack: 6, yTrack: 0, xSpan: 3, ySpan: 2 },
-        actions: { xTrack: 9, yTrack: 0, xSpan: 3, ySpan: 2 },
-        byReason: { xTrack: 0, yTrack: 2, xSpan: 4, ySpan: 6 },
-        byRisk: { xTrack: 4, yTrack: 2, xSpan: 4, ySpan: 6 },
-        decisions: { xTrack: 8, yTrack: 2, xSpan: 4, ySpan: 6 },
-        ledger: { xTrack: 0, yTrack: 8, xSpan: 12, ySpan: 9 },
-      },
-    },
-  ],
-} as unknown as AgReportState;
-
 export default function Insights() {
-  const [data, setData] = useState<Data | null>(null);
+  const [data, setData] = useState<InsightsTables | null>(null);
+  const [claude, setClaude] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<"view" | "edit">("view");
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const studioRef = useRef<AgStudio | null>(null);
+  const studioApi = { get current(): AgStudioApi | null { return studioRef.current?.api ?? null; } };
+  const dataRef = useRef<InsightsTables | null>(null);
+
   useEffect(() => {
-    api<Data>("/api/insights").then(setData, (e) => setError(e.message));
+    api<InsightsTables>("/api/insights").then((d) => {
+      dataRef.current = d;
+      setData(d);
+    }, (e) => setError(e.message));
+    api<{ ai: string }>("/api/health").then((h) => setClaude(h.ai === "claude"), () => {});
   }, []);
-  const sources = useMemo(
-    () =>
-      data && {
-        sources: [
-          { id: "invoices", name: "Open invoices", data: data.invoices.filter((i) => i.status !== "Settled") as never, fields: fieldsFor("invoices") as never },
-          { id: "actions", name: "Agent actions", data: data.actions as never, fields: fieldsFor("actions") as never },
-          { id: "payments", name: "Payments received", data: data.payments as never, fields: fieldsFor("payments") as never },
-        ],
-      },
-    [data],
-  );
-  if (error) return <p className="text-alert">{error}</p>;
-  if (!sources) return <Spinner label="Loading insights" />;
+  const sources = useMemo(() => (data ? dataSources(data) : null), [data]);
+  const initialReport = useMemo(() => structuredClone(INITIAL_REPORT), []);
+  const ai = useCallback((p: { api: AgStudioApi }) => buildHarness(p.api, () => dataRef.current!, claude), [claude]);
+
+  /** The same deterministic agent logic, reachable from the page as well as Studio's chat. */
+  function ask(question: string) {
+    const view = routeQuestion(question);
+    if (!view || !studioApi.current || !dataRef.current) {
+      setAnswer(view ? "Insights is still loading." : `I can't answer that from Unstuck's data yet. Try: ${PROMPT_STARTERS.map((s) => s.label.toLowerCase()).join(", ")}.`);
+      return;
+    }
+    openView(studioApi.current, view);
+    setAnswer(`${VIEWS[view].title}. ${explain(view, dataRef.current)}`);
+  }
+
+  if (error) return <p role="alert" className="text-alert">{error}</p>;
+  if (!sources || !data) return <Spinner label="Loading insights" />;
   return (
     <div>
-      <div className="mb-3 flex justify-end">
-        <button onClick={() => setMode((m) => (m === "view" ? "edit" : "view"))} className="rounded-[var(--radius-tight)] border border-rule-strong bg-surface px-3 py-1.5 text-sm hover:border-ink-soft" aria-pressed={mode === "edit"}>
+      <form
+        className="mb-3 flex flex-col gap-2 rounded-[var(--radius-soft)] border border-rule bg-surface p-3 sm:flex-row sm:items-center"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (q.trim()) ask(q);
+        }}
+      >
+        <label htmlFor="ask" className="shrink-0 text-sm font-medium text-ink">Ask Insights</label>
+        <input id="ask" value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. Which customers have the largest outstanding balance?" className="min-w-0 flex-1 rounded-[var(--radius-tight)] border border-rule-strong bg-surface px-3 py-1.5 text-sm" />
+        <button type="submit" className="rounded-[var(--radius-tight)] bg-ink px-3 py-1.5 text-sm font-medium text-surface">Show me</button>
+        <button type="button" onClick={() => setMode((m) => (m === "view" ? "edit" : "view"))} className="rounded-[var(--radius-tight)] border border-rule-strong bg-surface px-3 py-1.5 text-sm hover:border-ink-soft" aria-pressed={mode === "edit"}>
           {mode === "view" ? "Build your own report" : "Done editing"}
         </button>
+      </form>
+      <div className="mb-3 flex flex-wrap gap-1.5" aria-label="Suggested questions">
+        {PROMPT_STARTERS.map((s) => (
+          <button key={s.label} onClick={() => { setQ(s.prompt); ask(s.prompt); }} className="rounded-full border border-rule-strong bg-surface px-3 py-1 text-xs text-ink-soft hover:border-ink-soft hover:text-ink">
+            {s.label}
+          </button>
+        ))}
+        <button onClick={() => { if (studioApi.current) { openView(studioApi.current, "overview"); setAnswer(null); } }} className="rounded-full px-3 py-1 text-xs text-ink-soft underline decoration-rule-strong underline-offset-4 hover:text-ink">
+          Back to overview
+        </button>
       </div>
+      {answer && <p role="status" className="mb-3 rounded-[var(--radius-tight)] bg-ok-wash/70 px-3 py-2 text-sm text-ink">{answer}</p>}
+      <p className="mb-2 text-xs text-ink-faint">
+        {data.currency} only{data.excludedOtherCurrency ? `; ${data.excludedOtherCurrency} invoice(s) in other currencies excluded` : ""}. In <em>Build your own report</em>, the AG Studio AI panel hosts the <strong>Unstuck Insights</strong> agent, which answers the questions above from these read-only tables{claude ? "; Studio's built-in agents run on Claude for anything else." : ". Connect Claude to enable Studio's built-in agents for open-ended questions."}
+      </p>
       <div className="h-[1060px] overflow-hidden rounded-[var(--radius-soft)] border border-rule bg-surface">
-        <AgStudio data={sources} mode={mode} initialState={REPORT} theme={theme} />
+        <AgStudio
+          ref={studioRef}
+          data={sources}
+          mode={mode}
+          initialState={initialReport}
+          style={{ height: "100%" }}
+          theme={theme}
+          modules={[AgStudioAiModule]}
+          ai={ai as never}
+          panels={{ edit: { left: ["data"], right: ["ai", "edit", "filters"] }, view: { right: ["filters"] } }}
+        />
       </div>
     </div>
   );

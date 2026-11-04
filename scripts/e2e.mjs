@@ -46,6 +46,7 @@ const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, 
 const page = await ctx.newPage();
 const errors = [];
 page.on("pageerror", (e) => errors.push(e.message));
+page.on("console", (m) => { if (m.type() === "error" && /Fatal error/.test(m.text())) errors.push(m.text().slice(0, 200)); });
 
 try {
   await page.goto(BASE, { waitUntil: "networkidle" });
@@ -112,8 +113,29 @@ try {
   await page.goto(`${BASE}/insights`, { waitUntil: "load" });
   await page.getByText("Owed by stuck reason").waitFor({ timeout: 60_000 });
   await page.waitForTimeout(1500);
-  check("AG Studio insights report renders", (await page.getByText("Receivables ledger").count()) >= 1 && (await page.getByText("Agent actions").count()) >= 1);
+  check("AG Studio insights report renders", (await page.getByText("Receivables ledger").count()) >= 1 && (await page.getByText("What the agent did, by rule decision").count()) >= 1);
   await page.screenshot({ path: path.join(OUT, "10-insights-ag-studio.png") });
+
+  // Natural-language question on the page: routed to a predefined read-only report and answered from data.
+  await page.getByLabel("Ask Insights").fill("Which customers have the largest outstanding balance?");
+  await page.getByRole("button", { name: "Show me" }).click();
+  await page.getByText("Owed by client").first().waitFor({ timeout: 15_000 });
+  const answer = await page.getByRole("status").first().innerText();
+  check("Insights answers a balance question from data", /Fernwood Architects \$5,500/.test(answer), answer.slice(0, 120));
+  await page.getByLabel("Ask Insights").fill("What is the weather tomorrow?");
+  await page.getByRole("button", { name: "Show me" }).click();
+  await page.waitForTimeout(400);
+  check("Insights declines unsupported questions", /can't answer that/.test(await page.getByRole("status").first().innerText()));
+
+  // The same agent inside AG Studio's own AI panel (Studio Agent Framework, clientToolRunner).
+  await page.getByRole("button", { name: "Build your own report" }).click();
+  await page.waitForTimeout(2000);
+  const chat = page.locator("textarea").last();
+  await chat.fill("Build a report for invoices requiring human approval");
+  await chat.press("Enter");
+  await page.getByText(/Opened “Waiting for your approval”/).first().waitFor({ timeout: 15_000 });
+  check("Studio AI panel runs the Unstuck Insights agent", true);
+  await page.screenshot({ path: path.join(OUT, "11-insights-studio-agent.png") });
 
   // Activity log and rules pages render.
   await page.goto(`${BASE}/activity`, { waitUntil: "networkidle" });
