@@ -148,7 +148,9 @@ export function openDb(file: string): DB {
 }
 
 export function getDb(): DB {
-  if (!g.__unstuckDb) g.__unstuckDb = openDb(process.env.DATABASE_PATH ?? path.join(process.cwd(), "data", "unstuck.db"));
+  // Default lives under node_modules/.cache: shared by dev, `next start` and the seed scripts, and outside the
+  // dev server's file watcher (a DB inside the watched tree made Fast Refresh reload in a loop on every read).
+  if (!g.__unstuckDb) g.__unstuckDb = openDb(process.env.DATABASE_PATH || path.join(process.cwd(), "node_modules", ".cache", "unstuck", "unstuck.db"));
   return g.__unstuckDb;
 }
 

@@ -42,7 +42,7 @@ export async function handleInvoicePaymentUpdate(invoiceId: string, source: "web
       kind: "payment_received",
       actor: source === "simulation" ? "simulation" : "paypal",
       summary: `${formatMoney(delta, row.currency)} paid${source === "simulation" ? " (simulated)" : " via PayPal"}; invoice now ${row.status.replace(/_/g, " ").toLowerCase()}`,
-      data: { status: row.status, paid_minor: row.paid_minor, due_minor: row.due_minor, source },
+      data: { status: row.status, paid_minor: row.paid_minor, due_minor: row.due_minor, delta_minor: delta, source },
     });
   }
 

@@ -2,8 +2,7 @@ node_modules/
 .next/
 out/
 coverage/
-data/*.db
-data/*.db-*
+data/
 .env
 .env.*
 !.env.example

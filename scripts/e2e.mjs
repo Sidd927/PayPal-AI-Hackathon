@@ -108,6 +108,13 @@ try {
   check("cash unstuck reflects payment", /\$400/.test(await page.getByText(/Recovered after Unstuck acted/).innerText()));
   await page.screenshot({ path: path.join(OUT, "07-board-after.png") });
 
+  // AG Studio insights report renders with live data.
+  await page.goto(`${BASE}/insights`, { waitUntil: "load" });
+  await page.getByText("Owed by stuck reason").waitFor({ timeout: 60_000 });
+  await page.waitForTimeout(1500);
+  check("AG Studio insights report renders", (await page.getByText("Receivables ledger").count()) >= 1 && (await page.getByText("Agent actions").count()) >= 1);
+  await page.screenshot({ path: path.join(OUT, "10-insights-ag-studio.png") });
+
   // Activity log and rules pages render.
   await page.goto(`${BASE}/activity`, { waitUntil: "networkidle" });
   await page.waitForTimeout(600);

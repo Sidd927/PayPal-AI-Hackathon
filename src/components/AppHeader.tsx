@@ -8,6 +8,7 @@ export function AppHeader({ mode, business, right }: { mode?: Mode; business?: s
   const path = usePathname();
   const nav = [
     { href: "/", label: "Receivables" },
+    { href: "/insights", label: "Insights" },
     { href: "/activity", label: "Activity" },
     { href: "/policy", label: "Your rules" },
   ];
