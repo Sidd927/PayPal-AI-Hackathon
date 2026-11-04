@@ -4,7 +4,9 @@ import { type DiagnosisRow, type InvoiceRow, repo } from "../db";
 import { ACTION_META, type ActionType, isOpenStatus, type StuckReason } from "../domain";
 import { getGateway, readConfig, resolutionUrl } from "../config";
 import { type ActionView, viewAction } from "./actions";
-import { daysOverdue, reminderStats } from "./invoices";
+import { clientHistory, daysOverdue, promiseState, reminderStats } from "./invoices";
+import { type Risk, scoreRisk } from "../risk";
+import { addDays } from "../dates";
 import { planProgress } from "./payments";
 
 export type BoardRow = {
@@ -31,6 +33,7 @@ export type BoardRow = {
   disputed: boolean;
   remindersSent: number;
   lastActivity: string | null;
+  risk: Risk;
 };
 
 function parseDiagnosis(d: DiagnosisRow | undefined) {
@@ -42,7 +45,16 @@ function parseDiagnosis(d: DiagnosisRow | undefined) {
     summary: d.summary,
     evidence: JSON.parse(d.evidence_json) as { source: string; quote: string }[],
     extracted: JSON.parse(d.extracted_json) as Record<string, string | null>,
-    recommendation: JSON.parse(d.recommendation_json) as { action: ActionType; rationale: string; message: { subject: string; body: string } | null; tone: string },
+    recommendation: JSON.parse(d.recommendation_json) as {
+      action: ActionType;
+      rationale: string;
+      message: { subject: string; body: string } | null;
+      tone: string;
+      inference?: string;
+      expected_outcome?: string;
+      risks?: string[];
+      alternatives?: { action: ActionType; why: string }[];
+    },
     source: d.source,
     model: d.model,
     created_at: d.created_at,
@@ -57,6 +69,22 @@ function boardRow(inv: InvoiceRow, today: string): BoardRow {
   const plan = repo.latestPlan(inv.id);
   const prog = plan ? planProgress(plan, inv.paid_minor, today) : null;
   const ev = repo.listEvents({ invoiceId: inv.id, limit: 1 })[0];
+  const open = isOpenStatus(inv.status);
+  const overdue = open ? daysOverdue(inv, today) : 0;
+  const reminders = reminderStats(inv.id, today).sent;
+  const promise = promiseState(inv.id, today);
+  const risk = scoreRisk({
+    open,
+    daysOverdue: overdue,
+    dueMinor: inv.due_minor,
+    reason: d?.reason ?? null,
+    remindersSent: reminders,
+    hasClientReply: repo.listMessages(inv.id).some((m) => m.author === "client"),
+    history: clientHistory(inv),
+    plan: prog && plan?.status === "active" ? { onTrack: !prog.rows.some((r) => r.state === "overdue") } : null,
+    promiseUntil: promise.promised_by,
+    today,
+  });
   return {
     id: inv.id,
     number: inv.number,
@@ -79,8 +107,9 @@ function boardRow(inv: InvoiceRow, today: string): BoardRow {
     pendingCount: actions.filter((a) => a.status === "proposed").length,
     plan: prog ? { paidCount: prog.rows.filter((r) => r.state === "paid").length, count: prog.rows.length, nextDue: prog.next?.due_date ?? null } : null,
     disputed: !!inv.disputed,
-    remindersSent: reminderStats(inv.id, today).sent,
+    remindersSent: reminders,
     lastActivity: ev?.at ?? null,
+    risk,
   };
 }
 
@@ -109,12 +138,64 @@ export function modeInfo() {
   return { paypal, paypalError, webhookConfigured: cfg.paypal.webhookIdConfigured, ai: (cfg.ai.configured ? "claude" : "rules") as "claude" | "rules", model: cfg.ai.configured ? cfg.ai.model : null };
 }
 
+export function boardRows(today = todayIso()) {
+  return repo.listInvoices().map((i) => boardRow(i, today));
+}
+
+/**
+ * 30-day cash outlook. No probabilities are invented: amounts are grouped by the *basis* for expecting them
+ * (an agreed plan, a client promise, a payment the client says is in transit, or simply a due date),
+ * with high-risk balances shown separately.
+ */
+export function cashOutlook(rows: BoardRow[], today: string) {
+  const horizon = addDays(today, 30);
+  const weeks = [0, 1, 2, 3].map((w) => ({ start: addDays(today, w * 7), committedMinor: 0, dueMinor: 0 }));
+  const weekOf = (d: string) => (d < today ? weeks[0]! : weeks.find((w, i) => d >= w.start && (i === 3 || d < weeks[i + 1]!.start)) ?? null);
+  const out = { committedMinor: 0, inTransitMinor: 0, dueMinor: 0, atRiskMinor: 0, weeks };
+  for (const r of rows.filter((x) => x.open)) {
+    const plan = repo.activePlan(r.id);
+    if (plan) {
+      const inv = repo.getInvoice(r.id)!;
+      for (const ins of planProgress(plan, inv.paid_minor, today).rows) {
+        const left = ins.amount_minor - ins.paid_minor;
+        if (left <= 0 || ins.due_date > horizon) continue;
+        out.committedMinor += left;
+        const w = weekOf(ins.due_date);
+        if (w) w.committedMinor += left;
+      }
+      continue;
+    }
+    if (r.risk.band === "high") {
+      out.atRiskMinor += r.dueMinor;
+      continue;
+    }
+    const promise = promiseState(r.id, today);
+    if (promise.promised_by && !promise.promise_missed && promise.promised_by <= horizon) {
+      out.committedMinor += r.dueMinor;
+      const w = weekOf(promise.promised_by);
+      if (w) w.committedMinor += r.dueMinor;
+    } else if (r.reason === "already_paid") out.inTransitMinor += r.dueMinor;
+    else if (r.dueDate && r.dueDate <= horizon) {
+      out.dueMinor += r.dueMinor;
+      const w = weekOf(r.dueDate);
+      if (w) w.dueMinor += r.dueMinor;
+    }
+  }
+  return out;
+}
+
 export function boardSnapshot() {
   const today = todayIso();
   const invoices = repo.listInvoices();
   const rows = invoices.map((i) => boardRow(i, today));
   const open = rows.filter((r) => r.open);
-  const pending = repo.listActions({ status: "proposed" }).map(viewAction);
+  const riskOf = new Map(rows.map((r) => [r.id, r.risk.score]));
+  const pending = repo
+    .listActions({ status: "proposed" })
+    .map(viewAction)
+    .sort((a, b) => (riskOf.get(b.invoice_id) ?? 0) - (riskOf.get(a.invoice_id) ?? 0));
+  const overdue = open.filter((r) => r.daysOverdue > 0);
+  const run = repo.latestRun();
   const byReason: Record<string, { count: number; dueMinor: number }> = {};
   for (const r of open) {
     const k = r.reason ?? "undiagnosed";
@@ -131,8 +212,12 @@ export function boardSnapshot() {
       overdueCount: open.filter((r) => r.daysOverdue > 0).length,
       pendingApprovals: pending.length,
       cashUnstuckMinor: cashUnstuck(invoices),
+      avgDaysOverdue: overdue.length ? Math.round(overdue.reduce((s, r) => s + r.daysOverdue, 0) / overdue.length) : 0,
+      atRiskCount: open.filter((r) => r.risk.band === "high").length,
       byReason,
     },
+    outlook: cashOutlook(rows, today),
+    lastRun: run ? { id: run.id, status: run.status, started_at: run.started_at, finished_at: run.finished_at, summary: run.summary_json ? JSON.parse(run.summary_json) : null } : null,
     rows,
     pending,
     recent: repo

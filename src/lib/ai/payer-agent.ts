@@ -10,7 +10,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { addDays, isIsoDate } from "../dates";
 import { type InvoiceRow, repo } from "../db";
 import type { Installment } from "../domain";
-import { formatMoney, fromMinor, tryToMinor } from "../money";
+import { formatMoney, tryToMinor } from "../money";
 import { buildPlan, type Policy, type PolicyContext, suggestPlans, validatePlan } from "../policy";
 import { consumeAiBudget, FALLBACK_BETA, getAnthropic, quoteUntrusted } from "./anthropic";
 import { readConfig } from "../config";
@@ -226,4 +226,3 @@ function rulesTurn(ctx: ToolCtx, error?: string): PayerTurnResult {
   };
 }
 
-export { fromMinor };

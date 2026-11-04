@@ -68,6 +68,15 @@ export async function refreshInvoice(id: string): Promise<InvoiceRow> {
   return storeInvoice(inv);
 }
 
+/** Latest promise to pay recorded for this invoice (from the payer page) and whether it was missed. */
+export function promiseState(invoiceId: string, today = todayIso()) {
+  const p = repo.listEvents({ invoiceId, limit: 1000 }).find((e) => e.kind === "promise_to_pay");
+  if (!p?.data_json) return { promised_by: null, promise_missed: false };
+  const date = (JSON.parse(p.data_json) as { date?: string }).date ?? null;
+  const paidSince = repo.listEvents({ invoiceId, limit: 1000 }).some((e) => e.kind === "payment_received" && e.id > p.id);
+  return { promised_by: date, promise_missed: !!date && date < today && !paidSince };
+}
+
 export function daysOverdue(row: Pick<InvoiceRow, "due_date">, today = todayIso()): number {
   return row.due_date ? daysBetween(row.due_date, today) : 0;
 }
@@ -144,6 +153,7 @@ export function buildDiagnosisInput(row: InvoiceRow, policy: Policy, today = tod
     history: clientHistory(row),
     reminders: { sent: r.sent, last_sent: r.last },
     active_plan: plan ? plan.installments_json : null,
+    commitments: promiseState(row.id, today),
     messages: repo
       .listMessages(row.id)
       .filter((m) => m.author === "client" || m.author === "owner")

@@ -114,6 +114,25 @@ CREATE TABLE IF NOT EXISTS webhook_events (
   outcome TEXT
 );
 CREATE TABLE IF NOT EXISTS sim_invoices (id TEXT PRIMARY KEY, json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS agent_runs (
+  id TEXT PRIMARY KEY,
+  trigger TEXT NOT NULL,
+  status TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  summary_json TEXT
+);
+CREATE TABLE IF NOT EXISTS agent_steps (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL,
+  at TEXT NOT NULL,
+  invoice_id TEXT,
+  kind TEXT NOT NULL,
+  label TEXT NOT NULL,
+  detail TEXT,
+  status TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS agent_steps_run ON agent_steps(run_id, id);
 `;
 
 type DB = Database.Database;
@@ -209,6 +228,8 @@ export type ActionRow = {
 
 export type PlanRow = { id: string; invoice_id: string; action_id: string; installments_json: string; paid_minor_at_start: number; status: "active" | "completed" | "cancelled"; created_at: string };
 export type OfferRow = { id: string; invoice_id: string; installments_json: string; status: "open" | "accepted" | "pending_owner" | "superseded"; action_id: string | null; created_at: string };
+export type AgentRunRow = { id: string; trigger: string; status: "running" | "completed" | "failed"; started_at: string; finished_at: string | null; summary_json: string | null };
+export type AgentStepRow = { id: number; run_id: string; at: string; invoice_id: string | null; kind: string; label: string; detail: string | null; status: "ok" | "info" | "warn" | "error" | "skip" };
 export type EventRow = { id: number; at: string; invoice_id: string | null; kind: string; actor: string; summary: string; data_json: string | null };
 
 /* ------------------------------------------------------------------ */
@@ -404,8 +425,30 @@ export const repo = {
     getDb().prepare("UPDATE webhook_events SET outcome = ? WHERE id = ?").run(outcome, id);
   },
 
+  /* agent runs */
+  startRun(trigger: string) {
+    const id = newId("run");
+    getDb().prepare("INSERT INTO agent_runs (id, trigger, status, started_at) VALUES (?, ?, 'running', ?)").run(id, trigger, nowIso());
+    return id;
+  },
+  finishRun(id: string, status: "completed" | "failed", summary: unknown) {
+    getDb().prepare("UPDATE agent_runs SET status = ?, finished_at = ?, summary_json = ? WHERE id = ?").run(status, nowIso(), JSON.stringify(summary), id);
+  },
+  addStep(runId: string, s: { invoice_id?: string | null; kind: string; label: string; detail?: string; status: "ok" | "info" | "warn" | "error" | "skip" }) {
+    getDb().prepare("INSERT INTO agent_steps (run_id, at, invoice_id, kind, label, detail, status) VALUES (?, ?, ?, ?, ?, ?, ?)").run(runId, nowIso(), s.invoice_id ?? null, s.kind, s.label, s.detail ?? null, s.status);
+  },
+  latestRun() {
+    return getDb().prepare("SELECT * FROM agent_runs ORDER BY started_at DESC LIMIT 1").get() as AgentRunRow | undefined;
+  },
+  getRun(id: string) {
+    return getDb().prepare("SELECT * FROM agent_runs WHERE id = ?").get(id) as AgentRunRow | undefined;
+  },
+  listSteps(runId: string) {
+    return getDb().prepare("SELECT * FROM agent_steps WHERE run_id = ? ORDER BY id ASC").all(runId) as AgentStepRow[];
+  },
+
   /** Wipe all Unstuck state (demo reset). */
   resetAll() {
-    getDb().exec("DELETE FROM invoices; DELETE FROM messages; DELETE FROM diagnoses; DELETE FROM actions; DELETE FROM plans; DELETE FROM offers; DELETE FROM events; DELETE FROM webhook_events; DELETE FROM sim_invoices; DELETE FROM settings WHERE key != 'policy';");
+    getDb().exec("DELETE FROM invoices; DELETE FROM messages; DELETE FROM diagnoses; DELETE FROM actions; DELETE FROM plans; DELETE FROM offers; DELETE FROM events; DELETE FROM webhook_events; DELETE FROM sim_invoices; DELETE FROM agent_runs; DELETE FROM agent_steps; DELETE FROM settings WHERE key != 'policy';");
   },
 };
