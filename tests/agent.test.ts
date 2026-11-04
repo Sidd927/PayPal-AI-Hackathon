@@ -67,7 +67,7 @@ describe("agent run (simulation, rules-only)", () => {
     expect(kinds).toContain("prioritise");
     for (const k of ["gather", "diagnose", "plan", "policy", "act"]) expect(kinds).toContain(k);
     expect(kinds.at(-1)).toBe("done");
-    expect(run.summary).toMatchObject({ invoices: 7, diagnosed: 7, autoExecuted: expect.any(Number), awaitingApproval: expect.any(Number) });
+    expect(run.summary).toMatchObject({ invoices: 8, diagnosed: 8, autoExecuted: expect.any(Number), awaitingApproval: expect.any(Number) });
     expect(run.summary!.autoExecuted).toBeGreaterThanOrEqual(1); // Lumen's reminder
     // Highest-risk invoice is handled first.
     const firstInvoiceStep = run.steps.find((s) => s.invoice_id);
@@ -114,5 +114,40 @@ describe("agent run (simulation, rules-only)", () => {
     expect(rec.expected_outcome.length).toBeGreaterThan(0);
     expect(Array.isArray(rec.risks)).toBe(true);
     expect(rec.alternatives[0].action).toBe("pause_reminders");
+  });
+});
+
+describe("resolution loop", () => {
+  it("a missed promise goes back to the agent, is followed up within the rules, and every invoice sits in one stage", async () => {
+    freshEnv();
+    setGateway(new SimulatedGateway());
+    const ids = await seedScenario(getGateway(), { refresh: refreshInvoice });
+    const before = boardSnapshot();
+    const kestrel = () => boardSnapshot().rows.find((r) => r.id === ids.kestrel)!;
+    expect(kestrel()).toMatchObject({ missed: true, stage: "detected" });
+    expect(before.kpis.missedCount).toBe(1);
+
+    const { runId } = await runAgent("manual");
+    const run = runView(runId)!;
+    expect(run.steps.some((s) => s.invoice_id === ids.kestrel && s.kind === "follow_up" && /missed/.test(s.label))).toBe(true);
+
+    const d = repo.latestDiagnosis(ids.kestrel!)!;
+    expect(d.summary).toMatch(/Promised to pay by/);
+    const evidence = JSON.parse(d.evidence_json) as { source: string; quote: string }[];
+    // The client's own words are quoted verbatim; the broken promise is cited as a recorded fact, not a quote.
+    const said = repo.listMessages(ids.kestrel!).map((m) => m.body).join(" ");
+    expect(evidence.filter((e) => e.source === "client_message").every((e) => said.includes(e.quote))).toBe(true);
+    expect(evidence.some((e) => e.source === "history" && /no payment has been recorded/.test(e.quote))).toBe(true);
+    expect(JSON.parse(d.recommendation_json).inference).toMatch(/assumption/);
+
+    // The follow-up is a policy-checked reminder sent through PayPal; the invoice moves to "acted", still flagged.
+    expect(repo.listActions({ invoiceId: ids.kestrel! }).find((a) => a.type === "send_reminder")!.status).toBe("executed");
+    expect(kestrel()).toMatchObject({ stage: "acted", missed: true });
+
+    const snap = boardSnapshot();
+    const open = snap.rows.filter((r) => r.open);
+    expect(open.every((r) => r.stage !== null)).toBe(true);
+    expect(snap.loop.reduce((s, l) => s + l.count, 0)).toBe(open.length); // nothing paid yet, so open invoices only
+    expect(snap.loop.find((l) => l.stage === "approval")!.count).toBe(open.filter((r) => r.pendingCount > 0).length);
   });
 });

@@ -36,6 +36,15 @@ describe("question routing", () => {
     ["Show invoices with the highest risk and no recent customer response", "high-risk-silent"],
     ["Break down missed promises by customer", "promises-due"],
     ["Build a report for invoices requiring human approval", "approvals"],
+    ["Which customers account for the highest overdue receivables?", "overdue-by-customer"],
+    ["What are the most common reasons invoices are stuck?", "overdue-by-reason"],
+    ["Which payment promises have been missed?", "promises-due"],
+    ["Which invoices need owner intervention today?", "approvals"],
+    ["How much has been collected after Unstuck actions?", "collections-before-after"],
+    ["Which customers have not responded?", "no-response"],
+    ["Which invoices are at highest risk based on our actual risk rules?", "highest-risk"],
+    ["What worked?", "outcomes"],
+    ["What happened after Unstuck's actions? What worked?", "outcomes"],
   ])("%s → %s", (q, view) => {
     expect(routeQuestion(q)).toBe(view);
   });
@@ -59,7 +68,7 @@ describe("read-only tables", () => {
     await diagnoseAll();
     const t = insightsTables();
     expect(explain("largest-balances", t)).toMatch(/Fernwood Architects \$5,500/);
-    expect(explain("promises-due", t)).toMatch(/No client has made a promise/);
+    expect(explain("promises-due", t)).toMatch(/1 missed/);
     expect(explain("collections-before-after", t)).toMatch(/No payments have been recorded/);
     expect(t.approvals.length).toBeGreaterThan(0);
   });

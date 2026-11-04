@@ -4,7 +4,7 @@ import { AgStudio } from "ag-studio-react";
 import { AgStudioAiModule, AgStudioLicenseManager, type AgStudioApi, studioTheme } from "ag-studio";
 import type { InsightsTables } from "@/lib/services/insights";
 import { api } from "@/lib/client";
-import { dataSources, INITIAL_REPORT, PROMPT_STARTERS, routeQuestion, VIEWS, explain } from "./insights/report";
+import { dataSources, explain, INITIAL_REPORT, OVERVIEW, pageHeight, PROMPT_STARTERS, routeQuestion, VIEWS } from "./insights/report";
 import { buildHarness, openView } from "./insights/agents";
 import { Spinner } from "./ui";
 
@@ -33,6 +33,7 @@ export default function Insights() {
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [answer, setAnswer] = useState<string | null>(null);
+  const [pageId, setPageId] = useState<string>(OVERVIEW.id);
   const [q, setQ] = useState("");
   const studioRef = useRef<AgStudio | null>(null);
   const studioApi = { get current(): AgStudioApi | null { return studioRef.current?.api ?? null; } };
@@ -57,6 +58,7 @@ export default function Insights() {
       return;
     }
     openView(studioApi.current, view);
+    setPageId(VIEWS[view].page.id);
     setAnswer(`${VIEWS[view].title}. ${explain(view, dataRef.current)}`);
   }
 
@@ -84,7 +86,7 @@ export default function Insights() {
             {s.label}
           </button>
         ))}
-        <button onClick={() => { if (studioApi.current) { openView(studioApi.current, "overview"); setAnswer(null); } }} className="rounded-full px-3 py-1 text-xs text-ink-soft underline decoration-rule-strong underline-offset-4 hover:text-ink">
+        <button onClick={() => { if (studioApi.current) { openView(studioApi.current, "overview"); setPageId(OVERVIEW.id); setAnswer(null); } }} className="rounded-full px-3 py-1 text-xs text-ink-soft underline decoration-rule-strong underline-offset-4 hover:text-ink">
           Back to overview
         </button>
       </div>
@@ -92,7 +94,7 @@ export default function Insights() {
       <p className="mb-2 text-xs text-ink-faint">
         {data.currency} only{data.excludedOtherCurrency ? `; ${data.excludedOtherCurrency} invoice(s) in other currencies excluded` : ""}. In <em>Build your own report</em>, the AG Studio AI panel hosts the <strong>Unstuck Insights</strong> agent, which answers the questions above from these read-only tables{claude ? "; Studio's built-in agents run on Claude for anything else." : ". Connect Claude to enable Studio's built-in agents for open-ended questions."}
       </p>
-      <div className="h-[1060px] overflow-hidden rounded-[var(--radius-soft)] border border-rule bg-surface">
+      <div style={{ height: mode === "edit" ? 1060 : pageHeight(pageId) }} className="overflow-hidden rounded-[var(--radius-soft)] border border-rule bg-surface">
         <AgStudio
           ref={studioRef}
           data={sources}

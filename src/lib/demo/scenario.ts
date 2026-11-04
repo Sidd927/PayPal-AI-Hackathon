@@ -1,12 +1,13 @@
 /**
  * Demo scenario: Maya Okafor runs Juniper & Co. Studio, a two-person brand studio.
- * Seven open invoices, each stuck for a different reason, plus a little payment history.
+ * Eight open invoices, each stuck for a different reason (one with a promise to pay that was missed),
+ * plus a little payment history.
  *
  * All companies, people and email addresses are fictional (`.example` domains). Client messages are
  * seeded into Unstuck's own store (as if forwarded from email); invoices are created through the
  * InvoiceGateway — i.e. as real PayPal sandbox invoices when credentials are configured.
  */
-import { addDays, todayIso } from "../dates";
+import { addDays, formatDate, todayIso } from "../dates";
 import { repo } from "../db";
 import type { InvoiceGateway } from "../paypal/gateway";
 import { fromMinor } from "../money";
@@ -21,6 +22,8 @@ type SeedInvoice = {
   dueInDays: number; // negative = overdue
   messages?: { daysAgo: number; author: "client" | "owner"; body: string }[];
   remindersDaysAgo?: number[];
+  /** A promise to pay made `daysAgo` days ago for a date `byDaysAgo` days ago (already missed if > 0). "{promised_date}" in messages is filled in. */
+  promise?: { daysAgo: number; byDaysAgo: number };
   paid?: { daysAfterDue: number; method: "CHECK" | "BANK_TRANSFER" };
   usePayerEmail?: boolean;
 };
@@ -113,6 +116,17 @@ export const SCENARIO: SeedInvoice[] = [
     ],
   },
   {
+    key: "kestrel",
+    number: 1047,
+    recipient: { business: "Kestrel Media", given: "Ana", surname: "Lindqvist", email: "ana@kestrelmedia.example" },
+    items: [{ name: "Podcast cover art series (6 episodes)", amount: 1_250_00 }],
+    issuedDaysAgo: 46,
+    dueInDays: -16,
+    remindersDaysAgo: [10],
+    promise: { daysAgo: 9, byDaysAgo: 3 },
+    messages: [{ daysAgo: 9, author: "client", body: "Hi Maya, apologies for the wait. It's approved on our side and we'll pay it by {promised_date}." }],
+  },
+  {
     key: "fernwood",
     number: 1046,
     recipient: { business: "Fernwood Architects", given: "Hana", surname: "Lee", email: "hana@fernwood.example" },
@@ -178,16 +192,26 @@ export async function seedScenario(gw: InvoiceGateway, opts: { payerEmail?: stri
   // Conversation and prior reminder history (Unstuck's own store).
   for (const s of SCENARIO) {
     const id = ids[s.key]!;
-    for (const m of s.messages ?? []) {
-      repo.addMessage({ invoice_id: id, author: m.author, channel: "email", body: m.body, created_at: new Date(Date.now() - m.daysAgo * 86_400_000).toISOString() });
-    }
-    for (const d of s.remindersDaysAgo ?? []) {
-      repo.logEvent({ invoice_id: id, kind: "reminder_sent", actor: "paypal", summary: `PayPal automatic reminder (${d} days ago, before Unstuck)`, data: { historical: true, days_ago: d } });
-    }
+    seedConversation(id, s, today);
   }
   repo.setSetting("demo_seeded_at", new Date().toISOString());
   repo.setPolicy({ ...repo.getPolicy(), businessName: BUSINESS.name, ownerName: BUSINESS.owner });
   return ids;
+}
+
+/** Messages, prior PayPal reminders and any promise to pay, in Unstuck's own store. All fictional. */
+function seedConversation(id: string, s: SeedInvoice, today: string) {
+  const promisedBy = s.promise ? addDays(today, -s.promise.byDaysAgo) : null;
+  for (const m of s.messages ?? []) {
+    const body = promisedBy ? m.body.replace("{promised_date}", formatDate(promisedBy)) : m.body;
+    repo.addMessage({ invoice_id: id, author: m.author, channel: "email", body, created_at: new Date(Date.now() - m.daysAgo * 86_400_000).toISOString() });
+  }
+  for (const d of s.remindersDaysAgo ?? []) {
+    repo.logEvent({ invoice_id: id, kind: "reminder_sent", actor: "paypal", summary: `PayPal automatic reminder (${d} days ago, before Unstuck)`, data: { historical: true, days_ago: d } });
+  }
+  if (s.promise && promisedBy) {
+    repo.logEvent({ invoice_id: id, kind: "promise_to_pay", actor: "payer", summary: `Client promised to pay by ${formatDate(promisedBy)}`, data: { date: promisedBy }, at: new Date(Date.now() - s.promise.daysAgo * 86_400_000).toISOString() });
+  }
 }
 
 /**
@@ -201,12 +225,7 @@ export function restoreDemoConversations(invoices: { id: string; number: string 
     const s = m ? SCENARIO.find((x) => x.number === Number(m[1])) : undefined;
     if (!s || repo.listMessages(inv.id).length > 0 || (!s.messages?.length && !s.remindersDaysAgo?.length)) continue;
     if (repo.listEvents({ invoiceId: inv.id, limit: 1000 }).some((e) => e.kind === "reminder_sent")) continue;
-    for (const msg of s.messages ?? []) {
-      repo.addMessage({ invoice_id: inv.id, author: msg.author, channel: "email", body: msg.body, created_at: new Date(Date.now() - msg.daysAgo * 86_400_000).toISOString() });
-    }
-    for (const d of s.remindersDaysAgo ?? []) {
-      repo.logEvent({ invoice_id: inv.id, kind: "reminder_sent", actor: "paypal", summary: `PayPal automatic reminder (${d} days ago, before Unstuck)`, data: { historical: true, days_ago: d } });
-    }
+    seedConversation(inv.id, s, todayIso());
     restored++;
   }
   if (restored) repo.setPolicy({ ...repo.getPolicy(), businessName: BUSINESS.name, ownerName: BUSINESS.owner });

@@ -388,10 +388,10 @@ export const repo = {
   },
 
   /* events (audit log) */
-  logEvent(e: { invoice_id?: string | null; kind: string; actor: string; summary: string; data?: unknown }) {
+  logEvent(e: { invoice_id?: string | null; kind: string; actor: string; summary: string; data?: unknown; at?: string }) {
     getDb()
       .prepare("INSERT INTO events (at, invoice_id, kind, actor, summary, data_json) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(nowIso(), e.invoice_id ?? null, e.kind, e.actor, e.summary, e.data === undefined ? null : JSON.stringify(e.data));
+      .run(e.at ?? nowIso(), e.invoice_id ?? null, e.kind, e.actor, e.summary, e.data === undefined ? null : JSON.stringify(e.data));
   },
   listEvents(filter: { invoiceId?: string; limit?: number } = {}) {
     const lim = filter.limit ?? 300;

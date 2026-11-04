@@ -182,7 +182,7 @@ try {
   seed.stdout.on("data", (d) => (seedOut += d));
   seed.stderr.on("data", (d) => (seedOut += d));
   const code = await new Promise((r) => seed.on("close", r));
-  check("seed-sandbox created invoices via PayPal API", code === 0 && invoices.size === 12, `${invoices.size} invoices, exit ${code}`);
+  check("seed-sandbox created invoices via PayPal API", code === 0 && invoices.size === 13, `${invoices.size} invoices, exit ${code}`);
   if (code !== 0) console.log(seedOut);
   check("seeding used idempotency keys", calls.filter((c) => c.method === "POST" && c.path.startsWith("/v2/")).every((c) => !!c.requestId));
 
@@ -202,7 +202,7 @@ try {
   check("app runs in PayPal sandbox mode", health.data.paypal === "sandbox" && health.data.webhookConfigured, JSON.stringify(health.data));
 
   const sync = await api("/api/sync", {});
-  check("sync pulls invoices from PayPal", sync.status === 200 && sync.data.count === 12, `count ${sync.data.count}`);
+  check("sync pulls invoices from PayPal", sync.status === 200 && sync.data.count === 13, `count ${sync.data.count}`);
 
   const diag = await api("/api/diagnose", {});
   check("diagnose all", diag.status === 200 && diag.data.results.every((r) => r.ok));

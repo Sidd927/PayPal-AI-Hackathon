@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { ACTION_TYPES, type ProposedAction, STUCK_REASONS, type StuckReason } from "../domain";
-import { addDays, isIsoDate } from "../dates";
+import { addDays, formatDate, isIsoDate } from "../dates";
 import { tryToMinor } from "../money";
 import { buildPlan, type Policy, type PolicyContext, suggestPlans, validatePlan } from "../policy";
 import { consumeAiBudget, FALLBACK_BETA, getAnthropic, quoteUntrusted } from "./anthropic";
@@ -244,6 +244,30 @@ export function diagnoseWithRules(input: DiagnosisInput): DiagnosisOutput {
     alternatives: [] as DiagnosisOutput["alternatives"],
   };
   const reminder = (subject: string, body: string) => ({ subject, body: `${body}\n\nThanks,\n${first}` });
+  // A broken promise to pay is a recorded fact, not a keyword guess. Unless the client has since raised a
+  // blocker (dispute, missing PO, …), follow up on the promise itself and say plainly why it's unknown.
+  if (input.commitments.promise_missed && input.commitments.promised_by && (reason === "unknown" || reason === "forgot")) {
+    const by = formatDate(input.commitments.promised_by);
+    const promiseQuote = newestFirst.map((t) => t.split(/(?<=[.!?])\s+/).find((x) => /\b(pay|paid|payment)\b/i.test(x) && /\b(by|on|this|next|end of)\b/i.test(x))).find(Boolean);
+    return {
+      ...base,
+      reason: "forgot",
+      confidence: 0.5,
+      tone: "firm",
+      evidence: [
+        ...(promiseQuote ? [{ source: "client_message" as const, quote: promiseQuote.length > 160 ? `${promiseQuote.slice(0, 157)}…` : promiseQuote }] : []),
+        { source: "history" as const, quote: `Promised to pay by ${by}; no payment has been recorded since.` },
+      ],
+      summary: `Promised to pay by ${by}, and nothing has arrived.`,
+      inference: "Most missed promises are an oversight in the client's payment run, but that is an assumption: nothing on record says why it was missed.",
+      recommended_action: "send_reminder",
+      rationale: "Follow up on the specific promise, kindly, and make it easy to say what changed.",
+      expected_outcome: "The client pays, or tells you what's in the way (which re-opens diagnosis).",
+      risks: ["If something changed on their side, a reminder alone won't fix it"],
+      alternatives: [{ action: "escalate_to_owner", why: "A personal call if this is the second missed promise" }],
+      message: reminder(`Invoice ${num}: following up on ${by}`, `Hi ${client}, you mentioned invoice ${num} would be paid by ${by}, and I haven't seen it come through yet. Could you check where it is? If something has changed, just reply and we'll work it out.`),
+    };
+  }
   switch (reason) {
     case "dispute":
       return { ...base, reason, summary: "Client is objecting to the work and needs your judgement.", recommended_action: "escalate_to_owner", rationale: "Pressure during a dispute damages the relationship.", expected_outcome: "You agree a fix or a partial credit with the client.", risks: ["Leaving it unanswered hardens the dispute"], alternatives: [{ action: "pause_reminders", why: "Stop automated pressure while you talk" }], message: reminder(`Re: invoice ${num}`, `Hi ${client}, thanks for flagging this. I want to get it right — can we set up a quick call to go through the issue?`) };

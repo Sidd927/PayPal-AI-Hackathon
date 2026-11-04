@@ -4,6 +4,8 @@ import type { invoiceDetail } from "@/lib/services/board";
 import { ACTION_META, REASON_META } from "@/lib/domain";
 import { api, money, relTime, shortDate } from "@/lib/client";
 import { ActionCard } from "./ActionCard";
+import { STAGE_META } from "./ResolutionLoop";
+import { LOOP_STAGES } from "@/lib/services/loop-stages";
 import { Button, ReasonPhrase, RiskPill, Spinner, StatusPill } from "./ui";
 
 type Detail = NonNullable<ReturnType<typeof invoiceDetail>>;
@@ -124,6 +126,31 @@ export function InvoiceDrawer({ id, onClose, onChanged, version }: { id: string;
                 )}
               </div>
             </section>
+
+            {/* Where this invoice is in the loop */}
+            {row.stage && (
+              <section aria-label="Resolution loop for this invoice">
+                <ol className="grid grid-cols-6 gap-1">
+                  {LOOP_STAGES.map((st, i) => {
+                    const cur = LOOP_STAGES.indexOf(row.stage!);
+                    const approvedEver = d.events.some((e) => e.kind === "action_approved");
+                    const skipped = st === "approval" && i < cur && !approvedEver;
+                    const state = i < cur ? (skipped ? "skipped" : "done") : i === cur ? "current" : "next";
+                    return (
+                      <li key={st} className="min-w-0" aria-current={state === "current" ? "step" : undefined}>
+                        <span className={`block h-1.5 rounded-full ${state === "done" ? "bg-ok" : state === "current" ? (row.missed ? "bg-alert" : "bg-marigold") : state === "skipped" ? "bg-rule-strong" : "bg-rule"}`} />
+                        <span title={state === "skipped" ? "Not needed: this was within your rules" : STAGE_META[st].hint} className={`mt-1.5 block truncate text-[11px] ${state === "current" ? "font-medium text-ink" : "text-ink-faint"} ${state === "skipped" ? "line-through decoration-rule-strong" : ""}`}>
+                          {st === "approval" ? "Your OK" : STAGE_META[st].label}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ol>
+                <p className={`mt-2 text-sm ${row.missed ? "text-alert" : "text-ink-soft"}`}>
+                  {row.missed ? "A promise to pay or a plan installment was missed. The agent follows it up, and it stays flagged until PayPal records a payment." : `${STAGE_META[row.stage].hint}.`}
+                </p>
+              </section>
+            )}
 
             {/* Plan */}
             {d.plan && (

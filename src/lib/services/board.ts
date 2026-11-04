@@ -8,6 +8,7 @@ import { clientHistory, daysOverdue, promiseState, reminderStats } from "./invoi
 import { type Risk, scoreRisk } from "../risk";
 import { addDays } from "../dates";
 import { planProgress } from "./payments";
+import { LOOP_STAGES, type LoopStage } from "./loop-stages";
 
 export type BoardRow = {
   id: string;
@@ -34,7 +35,33 @@ export type BoardRow = {
   remindersSent: number;
   lastActivity: string | null;
   risk: Risk;
+  /** Where the invoice is in Unstuck's resolution loop (null: settled without Unstuck acting). */
+  stage: LoopStage | null;
+  /** A promise to pay passed without payment, or a plan installment is overdue. */
+  missed: boolean;
+  /** Money PayPal recorded after Unstuck first acted on this invoice (timing, not causation). */
+  collectedAfterActMinor: number;
 };
+
+export { LOOP_STAGES, type LoopStage };
+
+/**
+ * Place an invoice in exactly one stage of the resolution loop, from recorded facts only:
+ * diagnosis rows, action statuses, plans, promises and PayPal's payment status.
+ */
+export function loopStage(f: { open: boolean; diagnosed: boolean; pending: number; acted: boolean; agreed: boolean; collectedAfterAct: number }): LoopStage | null {
+  if (!f.open) return f.acted && f.collectedAfterAct > 0 ? "paid" : null;
+  if (f.pending > 0) return "approval";
+  if (f.agreed) return "agreed";
+  if (f.acted) return "acted";
+  return f.diagnosed ? "diagnosed" : "detected";
+}
+
+function collectedAfterAct(inv: InvoiceRow, executedByUnstuck: { paid_minor_before: number | null }[]) {
+  if (!executedByUnstuck.length) return 0;
+  const baseline = Math.min(...executedByUnstuck.map((a) => a.paid_minor_before ?? inv.paid_minor));
+  return Math.max(0, inv.paid_minor - baseline);
+}
 
 function parseDiagnosis(d: DiagnosisRow | undefined) {
   if (!d) return null;
@@ -73,6 +100,12 @@ function boardRow(inv: InvoiceRow, today: string): BoardRow {
   const overdue = open ? daysOverdue(inv, today) : 0;
   const reminders = reminderStats(inv.id, today).sent;
   const promise = promiseState(inv.id, today);
+  const executed = actions.filter((a) => a.status === "executed" && a.type !== "wait");
+  const byUnstuck = executed.filter((a) => a.origin !== "owner" && a.origin !== "system");
+  const collected = collectedAfterAct(inv, byUnstuck);
+  const planActive = !!prog && plan?.status === "active";
+  const planBehind = planActive && prog!.rows.some((r) => r.state === "overdue");
+  const missed = open && (promise.promise_missed || planBehind);
   const risk = scoreRisk({
     open,
     daysOverdue: overdue,
@@ -110,29 +143,32 @@ function boardRow(inv: InvoiceRow, today: string): BoardRow {
     remindersSent: reminders,
     lastActivity: ev?.at ?? null,
     risk,
+    stage: loopStage({ open, diagnosed: !!d, pending: actions.filter((a) => a.status === "proposed").length, acted: executed.length > 0, agreed: planActive || (!!promise.promised_by && !promise.promise_missed), collectedAfterAct: collected }),
+    missed,
+    collectedAfterActMinor: collected,
   };
 }
 
-/** "Cash unstuck": money collected on invoices after Unstuck first acted on them. */
+/** The resolution loop for the dashboard: one entry per stage, primary currency only. */
+export function resolutionLoop(rows: BoardRow[]) {
+  return LOOP_STAGES.map((stage) => {
+    // Missed promises first, then the most money: what the owner should look at.
+    const items = rows.filter((r) => r.stage === stage).sort((a, b) => Number(b.missed) - Number(a.missed) || b.dueMinor - a.dueMinor);
+    return {
+      stage,
+      count: items.length,
+      amountMinor: items.reduce((s, r) => s + (stage === "paid" ? r.collectedAfterActMinor : r.dueMinor), 0),
+      missed: items.filter((r) => r.missed).length,
+      items: items.map((r) => ({ id: r.id, client: r.client, missed: r.missed })),
+    };
+  });
+}
+
+/** The currency most open invoices are in; money figures never mix currencies. */
 export function primaryCurrency(rows: { currency: string; open: boolean }[]) {
   const counts = new Map<string, number>();
   for (const r of rows.filter((x) => x.open)) counts.set(r.currency, (counts.get(r.currency) ?? 0) + 1);
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? rows[0]?.currency ?? "USD";
-}
-
-/**
- * Money collected on invoices after Unstuck first acted on them. Only payments PayPal reports
- * (paid_minor) count; promises and plans never do. This is timing, not proof of causation.
- */
-function cashUnstuck(invoices: InvoiceRow[]) {
-  let total = 0;
-  for (const inv of invoices) {
-    const executed = repo.listActions({ invoiceId: inv.id, status: "executed" }).filter((a) => a.origin !== "owner" && a.origin !== "system");
-    if (!executed.length) continue;
-    const baseline = Math.min(...executed.map((a) => a.paid_minor_before ?? inv.paid_minor));
-    total += Math.max(0, inv.paid_minor - baseline);
-  }
-  return total;
 }
 
 export function modeInfo() {
@@ -227,12 +263,14 @@ export function boardSnapshot() {
       overdueMinor: open.filter((r) => r.daysOverdue > 0).reduce((s, r) => s + r.dueMinor, 0),
       overdueCount: open.filter((r) => r.daysOverdue > 0).length,
       pendingApprovals: pending.length,
-      cashUnstuckMinor: cashUnstuck(invoices.filter((i) => i.currency === currency)),
+      cashUnstuckMinor: rows.filter((r) => r.currency === currency).reduce((sum, r) => sum + r.collectedAfterActMinor, 0),
+      missedCount: open.filter((r) => r.missed).length,
       avgDaysOverdue: overdue.length ? Math.round(overdue.reduce((s, r) => s + r.daysOverdue, 0) / overdue.length) : 0,
       atRiskCount: open.filter((r) => r.risk.band === "high").length,
       byReason,
     },
     outlook: cashOutlook(rows.filter((r) => r.currency === currency), today),
+    loop: resolutionLoop(rows.filter((r) => r.currency === currency)),
     lastRun: run ? { id: run.id, status: run.status, started_at: run.started_at, finished_at: run.finished_at, summary: run.summary_json ? JSON.parse(run.summary_json) : null } : null,
     rows,
     pending,

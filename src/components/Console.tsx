@@ -10,6 +10,7 @@ import { InvoiceCards } from "./InvoiceCards";
 import { InvoiceDrawer } from "./InvoiceDrawer";
 import { ActionCard } from "./ActionCard";
 import { AgentRunTrace, type RunView } from "./AgentRun";
+import { ResolutionLoop } from "./ResolutionLoop";
 import { ToastProvider, useToast } from "./Toast";
 import { Button, ReasonDot, Spinner } from "./ui";
 
@@ -291,7 +292,12 @@ function ConsoleInner() {
               </div>
             </section>
 
-            {/* 3. What needs me? */}
+            {/* 3. Where is each invoice in the loop? */}
+            <div className="mb-10">
+              <ResolutionLoop loop={snap.loop} currency={snap.kpis.currency} onOpen={setOpenId} />
+            </div>
+
+            {/* 4. What needs me? */}
             <section className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_400px] lg:gap-12">
               <div className="min-w-0 lg:order-1">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-3">

@@ -43,8 +43,12 @@ export function insightsTables(today = todayIso()) {
       risk_band: { low: "Low", watch: "Watch", high: "High" }[r.risk.band],
       risk_score: r.risk.score,
       days_overdue: Math.max(0, r.daysOverdue),
-      days_since_client_reply: reply ? Math.round((Date.parse(today) - Date.parse(reply)) / 86_400_000) : 999,
+      days_since_client_reply: reply ? Math.round((Date.parse(today) - Date.parse(reply)) / 86_400_000) : null,
+      client_reply: reply ? `${Math.round((Date.parse(today) - Date.parse(reply)) / 86_400_000)} days ago` : "No reply yet",
+      top_risk_factor: [...r.risk.factors].sort((a, b) => b.points - a.points)[0]?.label ?? "",
       amount_due: r.dueMinor / 100,
+      overdue_amount: r.daysOverdue > 0 ? r.dueMinor / 100 : 0,
+      missed_promise: r.missed ? "Yes" : "No",
       next_step: r.plan ? "Payment plan" : r.next ? ACTION_META[r.next.type].label : "",
       awaiting_approval: r.pendingCount > 0 ? "Yes" : "No",
     };
@@ -87,6 +91,14 @@ export function insightsTables(today = todayIso()) {
       why: (JSON.parse(a.decision_reasons_json) as string[])[0] ?? "",
     }));
 
+  // What happened after each action, from PayPal's recorded payments. Timing only: never "caused by".
+  const outcomeOf = (a: (typeof actions)[number]) => {
+    if (a.status !== "executed") return a.status === "proposed" ? "Waiting for approval" : a.status === "blocked" ? "Blocked by rules" : a.status === "failed" ? "Failed" : "Not run";
+    const inv = repo.getInvoice(a.invoice_id);
+    if (!inv) return "No payment yet";
+    const paidSince = inv.paid_minor > (a.paid_minor_before ?? inv.paid_minor);
+    return paidSince ? (isOpenStatus(inv.status) ? "Part paid since" : "Paid in full since") : isOpenStatus(inv.status) ? "No payment yet" : "Settled";
+  };
   const agentActions = actions
     .filter((a) => names.has(a.invoice_id))
     .map((a) => ({
@@ -96,6 +108,7 @@ export function insightsTables(today = todayIso()) {
       proposed_by: ({ agent: "Agent", payer: "Client", owner: "Owner", system: "Agent" } as Record<string, string>)[a.origin] ?? a.origin,
       rule_decision: { auto: "Automatic", approve: "Needs approval", block: "Blocked" }[a.decision],
       status: a.status,
+      outcome: outcomeOf(a),
     }));
 
   return {

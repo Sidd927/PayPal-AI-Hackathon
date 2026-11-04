@@ -58,12 +58,14 @@ try {
   check("demo reset", reset.status === 200);
   await page.reload({ waitUntil: "networkidle" });
   await page.getByRole("heading", { level: 1 }).waitFor();
-  check("hero sentence shows money owed", /owed \$20,450 across seven invoices/.test(await page.getByRole("heading", { level: 1 }).innerText()));
+  check("hero sentence shows money owed", /owed \$21,700 across eight invoices/.test(await page.getByRole("heading", { level: 1 }).innerText()));
   await page.screenshot({ path: path.join(OUT, "01-board-before.png") });
 
   await page.getByRole("button", { name: /^Run the agent/ }).click();
   await page.getByText(/Agent run finished/).waitFor({ timeout: 120_000 });
   check("agent run trace is visible", (await page.getByRole("heading", { name: /Last agent run/ }).count()) === 1);
+  const loopText = await page.locator('section[aria-labelledby="loop-h"]').innerText();
+  check("resolution loop shows the missed promise back with the agent", /1 missed promise/.test(loopText) && /Kestrel Media/.test(loopText));
   await page.waitForTimeout(800);
   const grid = page.locator(".ag-grid-scrolling-rows");
   check("board shows reasons", (await grid.getByText("Missing PO / AP details").count()) === 1 && (await grid.getByText("Cash is tight").count()) === 1 && (await grid.getByText("Disputing the work").count()) === 1);
@@ -106,7 +108,8 @@ try {
   await page.bringToFront();
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForTimeout(800);
-  check("cash unstuck reflects payment", /\$400/.test(await page.getByText(/Collected after Unstuck acted/).innerText()));
+  check("loop moves Bluebird to Agreed after the plan", /Bluebird Café/.test(await page.locator('[data-stage="agreed"]').innerText()));
+  check("cash unstuck reflects payment", /\$400/.test(await page.getByText(/Collected after Unstuck acted:/).innerText()));
   await page.screenshot({ path: path.join(OUT, "07-board-after.png") });
 
   // AG Studio insights report renders with live data.

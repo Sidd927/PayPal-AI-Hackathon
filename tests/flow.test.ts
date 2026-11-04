@@ -30,9 +30,9 @@ describe("simulation end-to-end (rules-only AI)", () => {
 
   it("seeds open invoices plus paid history", () => {
     const snap = boardSnapshot();
-    expect(snap.kpis.openCount).toBe(7);
+    expect(snap.kpis.openCount).toBe(8);
     expect(snap.rows.filter((r) => !r.open)).toHaveLength(5);
-    expect(snap.kpis.overdueCount).toBe(6);
+    expect(snap.kpis.overdueCount).toBe(7);
   });
 
   it("diagnoses each stuck invoice for a different reason and routes actions through policy", async () => {
