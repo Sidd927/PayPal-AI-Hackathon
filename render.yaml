@@ -1,5 +1,9 @@
 # Render Blueprint — https://render.com/docs/blueprint-spec
 # Deploy: New → Blueprint → select this repo. Fill in the secret env vars in the dashboard.
+# Persistence: free instances have an ephemeral disk. PayPal remains the source of truth and the app re-syncs
+# on first load, but the audit log and agent-run history reset on restart. For persistence, upgrade to a paid
+# instance, add a disk mounted at /var/data, and set DATABASE_PATH=/var/data/unstuck.db.
+# Scheduling: a Render cron job (paid) can POST /api/agent/run with "Authorization: Bearer $AGENT_RUN_TOKEN".
 services:
   - type: web
     name: unstuck
@@ -34,4 +38,8 @@ services:
       - key: DATABASE_PATH
         value: /tmp/unstuck.db
       - key: OWNER_BASIC_AUTH
+        sync: false
+      - key: AGENT_RUN_TOKEN
+        sync: false
+      - key: NEXT_PUBLIC_AG_GRID_LICENSE_KEY
         sync: false

@@ -269,6 +269,11 @@ try {
   const rec = await api(`/api/actions/${atlasAction.id}/approve`, {});
   check("record cheque payment → MARKED_AS_PAID in PayPal", rec.data.status === "executed" && invoices.get(atlas.id).status === "MARKED_AS_PAID");
 
+  // Agent run over the live code path: syncs from (mock) PayPal and records an observable trace.
+  const runRes = await api("/api/agent/run", {});
+  const steps = runRes.data.run?.steps ?? [];
+  check("agent run completes over the live gateway with a PayPal sync step", runRes.status === 200 && runRes.data.run.status === "completed" && /PayPal sandbox/.test(steps[0]?.label ?? ""), steps[0]?.label);
+
   // Owner adds an early-payment discount to Fernwood.
   const fern = byClient("Fernwood Architects");
   const disc = await fetch(`${APP}/api/invoices/${fern.id}/actions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "add_early_payment_discount", params: { percent: 2, expires_on: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10) } }) }).then((r) => r.json());

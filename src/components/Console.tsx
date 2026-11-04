@@ -4,7 +4,8 @@ import type { boardSnapshot } from "@/lib/services/board";
 import { REASON_META, type StuckReason } from "@/lib/domain";
 import { api, countWord, money, relTime } from "@/lib/client";
 import { AppHeader } from "./AppHeader";
-import { Board, type BoardHandle } from "./Board";
+import dynamic from "next/dynamic";
+import type { BoardHandle } from "./Board";
 import { InvoiceCards } from "./InvoiceCards";
 import { InvoiceDrawer } from "./InvoiceDrawer";
 import { ActionCard } from "./ActionCard";
@@ -13,6 +14,21 @@ import { ToastProvider, useToast } from "./Toast";
 import { Button, ReasonDot, Spinner } from "./ui";
 
 type Snapshot = ReturnType<typeof boardSnapshot>;
+
+// AG Grid is only needed at md+ (phones get InvoiceCards), so it is code-split and loaded on wide screens only.
+const Board = dynamic(() => import("./Board").then((m) => m.Board), { ssr: false, loading: () => <Spinner label="Loading the board" /> });
+
+function useWide(query = "(min-width: 768px)") {
+  const [wide, setWide] = useState<boolean | null>(null);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const on = () => setWide(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, [query]);
+  return wide;
+}
 const cap = (s: string) => s.replace(/^./, (c) => c.toUpperCase());
 
 function HeroSentence({ s }: { s: Snapshot }) {
@@ -115,6 +131,7 @@ function ConsoleInner() {
   const [lastRun, setLastRun] = useState<RunView | null>(null);
   const prev = useRef<Map<string, string>>(new Map());
   const boardRef = useRef<BoardHandle>(null);
+  const wide = useWide();
 
   const load = useCallback(async () => {
     try {
@@ -296,7 +313,7 @@ function ConsoleInner() {
                   </div>
                 </div>
                 <div className="hidden h-[600px] md:block">
-                  <Board ref={boardRef} rows={snap.rows} reasonFilter={reason} quickFilter={q} onOpen={setOpenId} selectedId={openId} flashIds={flash} />
+                  {wide && <Board ref={boardRef} rows={snap.rows} reasonFilter={reason} quickFilter={q} onOpen={setOpenId} selectedId={openId} flashIds={flash} />}
                 </div>
                 <div className="md:hidden">
                   <InvoiceCards rows={filteredRows} onOpen={setOpenId} />

@@ -26,7 +26,7 @@ export function AppHeader({ mode, business, right }: { mode?: Mode; business?: s
         </Link>
         <nav aria-label="Main" className="flex gap-1 text-sm">
           {nav.map((n) => (
-            <Link key={n.href} href={n.href} aria-current={path === n.href ? "page" : undefined} className={`rounded-full px-3 py-1.5 ${path === n.href ? "bg-ink text-surface" : "text-ink-soft hover:bg-rule/50 hover:text-ink"}`}>
+            <Link key={n.href} href={n.href} prefetch={n.href === "/" || n.href === "/policy" ? undefined : false} aria-current={path === n.href ? "page" : undefined} className={`rounded-full px-3 py-1.5 ${path === n.href ? "bg-ink text-surface" : "text-ink-soft hover:bg-rule/50 hover:text-ink"}`}>
               {n.label}
             </Link>
           ))}
