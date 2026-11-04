@@ -4,7 +4,7 @@
  * Execution is the only place PayPal write APIs are called. Each action id doubles as the
  * PayPal-Request-Id so retries (or double clicks) are idempotent at PayPal too.
  */
-import { todayIso } from "../dates";
+import { formatDate, todayIso } from "../dates";
 import { type ActionRow, newId, repo } from "../db";
 import { ACTION_META, type ActionType, type Installment, type PolicyDecision, type ProposedAction, parseActionParams } from "../domain";
 import { formatMoney, fromMinor } from "../money";
@@ -51,7 +51,7 @@ export async function proposeAction(invoiceId: string, proposed: ProposedAction,
     invoice_id: invoiceId,
     kind: "action_proposed",
     actor: proposed.origin,
-    summary: `${ACTION_META[proposed.type].label}: policy says ${decision.decision === "auto" ? "safe to run automatically" : decision.decision === "approve" ? "needs your approval" : "blocked"}`,
+    summary: `${ACTION_META[proposed.type].label} proposed; ${decision.decision === "auto" ? "inside your rules, running automatically" : decision.decision === "approve" ? "waiting for your approval" : "blocked by your rules"}`,
     data: { action_id: id, decision },
   });
   if (decision.decision === "auto" && opts.executeIfAuto !== false) {
@@ -98,7 +98,7 @@ function appendNote(existing: string | undefined, addition: string) {
 }
 
 export function describePlan(installments: Installment[], currency: string) {
-  return installments.map((i, n) => `${n + 1}) ${formatMoney(i.amount_minor, currency)} by ${i.due_date}`).join("  ");
+  return installments.map((i, n) => `${n + 1}) ${formatMoney(i.amount_minor, currency)} by ${formatDate(i.due_date)}`).join("  ");
 }
 
 /** Execute an approved action against PayPal. Never throws: failures are recorded on the action. */
@@ -149,7 +149,7 @@ export async function executeAction(id: string): Promise<ActionRow> {
             requestId,
           ),
         );
-        summary = `${params.percent}% early-payment discount until ${params.expires_on}`;
+        summary = `${params.percent}% early-payment discount until ${formatDate(params.expires_on)}`;
         break;
       }
       case "update_reference": {
@@ -180,12 +180,13 @@ export async function executeAction(id: string): Promise<ActionRow> {
         summary = "Flagged for your review";
         break;
       case "wait":
-        summary = `Waiting until ${params.until}`;
+        summary = `Nothing to send now; checking again on ${formatDate(params.until)}`;
         break;
     }
     const after = ["send_reminder", "escalate_to_owner", "wait"].includes(type) ? row : await refreshInvoice(a.invoice_id);
     repo.transitionAction(id, ["executing"], "executed", { result_json: JSON.stringify({ summary, receipts, invoice_status: after.status }) });
-    repo.logEvent({ invoice_id: a.invoice_id, kind: "action_executed", actor: a.origin === "owner" ? "owner" : "unstuck", summary: `${ACTION_META[type].label} — ${summary}`, data: { action_id: id, receipts } });
+    repo.supersedeSameType(a.invoice_id, type, id);
+    repo.logEvent({ invoice_id: a.invoice_id, kind: "action_executed", actor: a.origin === "owner" ? "owner" : "unstuck", summary: `${ACTION_META[type].label}: ${summary}`, data: { action_id: id, receipts } });
   } catch (err) {
     const e = err as Error & { status?: number };
     const detail = err instanceof PayPalApiError ? { status: err.status, name: err.name_, debugId: err.debugId, details: err.details } : { status: e.status };

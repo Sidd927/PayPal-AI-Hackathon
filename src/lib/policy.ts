@@ -235,6 +235,7 @@ export function evaluateAction(action: ProposedAction, ctx: PolicyContext, polic
       return { decision: "auto", reasons: ["Reduces pressure; no money change"], checks };
 
     case "escalate_to_owner":
+      return { decision: action.origin === "owner" ? "auto" : "approve", reasons: ["Needs your judgement — nothing is sent to the client"], checks };
     case "wait":
       return { decision: "auto", reasons: ["Informational — nothing is sent"], checks };
   }

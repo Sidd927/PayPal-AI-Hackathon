@@ -2,7 +2,7 @@
  * Reacting to money arriving: plan progress and next-installment minimum due.
  * Triggered by a verified PayPal webhook, a manual/periodic sync, or (simulation) a simulated payment.
  */
-import { todayIso } from "../dates";
+import { formatDate, todayIso } from "../dates";
 import { type PlanRow, newId, repo } from "../db";
 import type { Installment } from "../domain";
 import { formatMoney, fromMinor } from "../money";
@@ -41,7 +41,7 @@ export async function handleInvoicePaymentUpdate(invoiceId: string, source: "web
       invoice_id: row.id,
       kind: "payment_received",
       actor: source === "simulation" ? "simulation" : "paypal",
-      summary: `${formatMoney(delta, row.currency)} paid${source === "simulation" ? " (simulated)" : " via PayPal"} — ${row.status.replace(/_/g, " ").toLowerCase()}`,
+      summary: `${formatMoney(delta, row.currency)} paid${source === "simulation" ? " (simulated)" : " via PayPal"}; invoice now ${row.status.replace(/_/g, " ").toLowerCase()}`,
       data: { status: row.status, paid_minor: row.paid_minor, due_minor: row.due_minor, source },
     });
   }
@@ -51,7 +51,7 @@ export async function handleInvoicePaymentUpdate(invoiceId: string, source: "web
   const progress = planProgress(plan, row.paid_minor);
   if (progress.complete || row.due_minor === 0) {
     repo.setPlanStatus(plan.id, "completed");
-    repo.logEvent({ invoice_id: row.id, kind: "plan_completed", actor: "unstuck", summary: "Payment plan completed — invoice paid in full" });
+    repo.logEvent({ invoice_id: row.id, kind: "plan_completed", actor: "unstuck", summary: "Payment plan completed; invoice paid in full" });
     return { row, planUpdated: true };
   }
   const nextMin = Math.min(progress.nextRemainingMinor, row.due_minor);
@@ -69,7 +69,7 @@ export async function handleInvoicePaymentUpdate(invoiceId: string, source: "web
     invoice_id: row.id,
     kind: "plan_advanced",
     actor: "unstuck",
-    summary: `Next installment: ${formatMoney(nextMin, row.currency)} by ${progress.next!.due_date} — PayPal minimum due updated`,
+    summary: `Next installment ${formatMoney(nextMin, row.currency)} by ${formatDate(progress.next!.due_date)}; PayPal minimum due updated`,
     data: { receipt: res.receipt },
   });
   await refreshInvoice(row.id);

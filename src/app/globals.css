@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+/*
+ * Unstuck design tokens — bookkeeping vernacular: ledger paper, bottle-green ink,
+ * one marigold accent reserved for "money moves / something gets unstuck".
+ */
+@theme {
+  --color-paper: #eef2eb;
+  --color-surface: #fafbf8;
+  --color-ink: #17312a;
+  --color-ink-soft: #52645c;
+  --color-ink-faint: #7d8d85;
+  --color-rule: #d3ddd2;
+  --color-rule-strong: #b7c6b8;
+  --color-marigold: #e3a02f;
+  --color-marigold-deep: #a86b0c;
+  --color-marigold-wash: #fbefd8;
+  --color-alert: #b2442f;
+  --color-alert-wash: #f6e3dd;
+  --color-ok: #2f6f4e;
+  --color-ok-wash: #e0eee5;
+
+  /* stuck-reason hues: muted, distinguishable, AA on surface */
+  --color-r-sky: #3a6c8f;
+  --color-r-amber: #9a6512;
+  --color-r-violet: #6b4f93;
+  --color-r-rose: #a13d4f;
+  --color-r-teal: #2b7470;
+  --color-r-emerald: #357049;
+  --color-r-slate: #5b6670;
+  --color-r-stone: #7a7468;
+
+  --font-display: "Fraunces Variable", "Iowan Old Style", Georgia, serif;
+  --font-sans: "Instrument Sans Variable", "Segoe UI", system-ui, sans-serif;
+
+  --radius-soft: 10px;
+  --radius-tight: 6px;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background: var(--color-paper);
+  min-height: 100dvh;
+}
+
+.font-display {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  font-variation-settings: "SOFT" 60, "WONK" 0;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* Ledger ruling used behind the hero sentence */
+.ledger {
+  background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 2.95rem, var(--color-rule) 2.95rem, var(--color-rule) calc(2.95rem + 1px));
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-marigold-deep);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes drawer-in {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.drawer-in { animation: drawer-in 180ms ease-out; }
+
+@keyframes unstick {
+  0% { background-color: var(--color-marigold-wash); }
+  100% { background-color: transparent; }
+}
+.flash-unstick { animation: unstick 1.6s ease-out; }
+
+/* AG Grid: let our renderers own vertical rhythm */
+.ag-theme-unstuck .ag-cell { display: flex; align-items: center; }
+.ag-theme-unstuck .ag-row { cursor: pointer; }

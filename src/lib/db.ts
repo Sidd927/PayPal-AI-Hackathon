@@ -317,6 +317,10 @@ export const repo = {
       });
     return r.changes === 1;
   },
+  /** Once an action of a given type has run, older pending proposals of that type are moot. */
+  supersedeSameType(invoiceId: string, type: ActionType, exceptId: string) {
+    getDb().prepare("UPDATE actions SET status = 'rejected', error = 'Superseded: this was already done' WHERE invoice_id = ? AND type = ? AND id != ? AND status = 'proposed'").run(invoiceId, type, exceptId);
+  },
   supersedeProposals(invoiceId: string) {
     getDb().prepare("UPDATE actions SET status = 'rejected', error = 'Superseded by a newer diagnosis' WHERE invoice_id = ? AND status = 'proposed' AND origin = 'agent'").run(invoiceId);
   },

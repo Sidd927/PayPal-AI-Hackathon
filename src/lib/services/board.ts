@@ -106,7 +106,7 @@ export function modeInfo() {
     paypal = "misconfigured";
     paypalError = (e as Error).message;
   }
-  return { paypal, paypalError, webhookConfigured: cfg.paypal.webhookIdConfigured, ai: cfg.ai.configured ? "claude" : "rules", model: cfg.ai.configured ? cfg.ai.model : null };
+  return { paypal, paypalError, webhookConfigured: cfg.paypal.webhookIdConfigured, ai: (cfg.ai.configured ? "claude" : "rules") as "claude" | "rules", model: cfg.ai.configured ? cfg.ai.model : null };
 }
 
 export function boardSnapshot() {
@@ -135,6 +135,11 @@ export function boardSnapshot() {
     },
     rows,
     pending,
+    recent: repo
+      .listEvents({ limit: 60 })
+      .filter((e) => ["action_executed", "payment_received", "offer_accepted", "plan_completed", "plan_advanced", "payer_escalation", "promise_to_pay", "webhook"].includes(e.kind))
+      .slice(0, 5)
+      .map((e) => ({ id: e.id, at: e.at, actor: e.actor, summary: e.summary, client: e.invoice_id ? invoices.find((i) => i.id === e.invoice_id)?.recipient_business ?? null : null, invoiceId: e.invoice_id })),
     seeded: !!repo.getSetting("demo_seeded_at"),
   };
 }

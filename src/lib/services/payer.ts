@@ -3,7 +3,7 @@ import { type InvoiceRow, repo } from "../db";
 import { type Installment, isOpenStatus } from "../domain";
 import { getGateway, readConfig } from "../config";
 import { payerTurn } from "../ai/payer-agent";
-import { SimulatedGateway } from "../paypal/simulated";
+import type { SimulatedGateway } from "../paypal/simulated";
 import { proposeAction, viewAction } from "./actions";
 import { approveActionInternal } from "./internal";
 import { policyContextFor } from "./invoices";
@@ -85,7 +85,8 @@ export async function payerAcceptOffer(row: InvoiceRow, offerId: string) {
 /** Simulation only: stand in for the payer paying on PayPal's invoice page. */
 export async function simulatePayment(row: InvoiceRow, amountMinor: number) {
   const gw = getGateway();
-  if (!(gw instanceof SimulatedGateway)) throw Object.assign(new Error("Simulated payments are only available in simulation mode"), { status: 409 });
-  gw.simulatePayerPayment(row.id, amountMinor);
+  // Check by mode, not instanceof: Next.js may load the gateway class in more than one bundle.
+  if (gw.mode !== "simulated") throw Object.assign(new Error("Simulated payments are only available in simulation mode"), { status: 409 });
+  (gw as SimulatedGateway).simulatePayerPayment(row.id, amountMinor);
   return handleInvoicePaymentUpdate(row.id, "simulation");
 }

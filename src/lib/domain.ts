@@ -57,7 +57,7 @@ export const ACTION_META: Record<ActionType, { label: string; verb: string; payp
   record_external_payment: { label: "Record payment received", verb: "Record payment", paypal: "POST /v2/invoicing/invoices/{id}/payments", movesMoney: true },
   pause_reminders: { label: "Pause automatic reminders", verb: "Pause reminders", paypal: "POST /v2/invoicing/invoices/{id}/cancel-reminders", movesMoney: false },
   escalate_to_owner: { label: "Needs your judgement", verb: "Review", paypal: null, movesMoney: false },
-  wait: { label: "Wait — promise to pay", verb: "Wait", paypal: null, movesMoney: false },
+  wait: { label: "Check back later", verb: "Wait", paypal: null, movesMoney: false },
 };
 
 const isoDate = z.string().regex(ISO_DATE_RE, "Expected YYYY-MM-DD");

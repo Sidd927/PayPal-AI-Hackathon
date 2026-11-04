@@ -32,7 +32,7 @@ export async function diagnoseInvoice(invoiceId: string, opts: { force?: boolean
     invoice_id: invoiceId,
     kind: "diagnosed",
     actor: result.source === "ai" ? "ai" : "rules",
-    summary: `Diagnosed as “${o.reason.replace("_", " ")}” (${Math.round(o.confidence * 100)}% confidence)${result.error ? ` — ${result.error}` : ""}`,
+    summary: `Diagnosed as “${o.reason.replace("_", " ")}” (${Math.round(o.confidence * 100)}% confidence)${result.error ? `. ${result.error}` : ""}`,
     data: { diagnosis_id: diagnosisId, model: result.model, source: result.source, error: result.error },
   });
   if (o.reason === "dispute") repo.setDisputed(invoiceId, true);

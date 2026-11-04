@@ -204,7 +204,7 @@ export function diagnoseWithRules(input: DiagnosisInput): DiagnosisOutput {
   const amount = /\$\s?([\d,]+(?:\.\d{2})?)/.exec(clientText)?.[1] ?? null;
   const base = {
     confidence: reason === "unknown" ? 0.3 : 0.6,
-    evidence: clientText ? [{ source: "client_message" as const, quote: clientText.slice(0, 160) }] : [{ source: "invoice" as const, quote: `${input.invoice.days_overdue} days overdue, ${input.reminders.sent} reminders sent` }],
+    evidence: clientText ? [{ source: "client_message" as const, quote: clientText.length > 160 ? `${clientText.slice(0, 160).replace(/\s+\S*$/, "")}…` : clientText }] : [{ source: "invoice" as const, quote: `${input.invoice.days_overdue} days overdue, ${input.reminders.sent} reminders sent` }],
     extracted: { po_number: po, new_contact_email: email, promised_date: null, proposed_first_payment: amount, disputed_item: null },
     plan: null,
     discount_percent: null,
