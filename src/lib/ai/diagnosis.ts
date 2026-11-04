@@ -199,6 +199,14 @@ const KW: [StuckReason, RegExp][] = [
   ["cash_flow", /\b(tight|can'?t (afford|pay (it )?all)|split|installments?|part (now|of it)|half now|payment plan|slow (month|season|summer)|cash ?flow)\b/i],
 ];
 
+/** Quote the sentence that triggered the rule (verbatim), not just the start of the message. */
+function matchingSentence(text: string, reason: StuckReason): string {
+  const re = KW.find(([r]) => r === reason)?.[1];
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  const hit = (re && sentences.find((x) => re.test(x))) || sentences[0] || text;
+  return hit.length > 200 ? `${hit.slice(0, 200).replace(/\s+\S*$/, "")}…` : hit;
+}
+
 export function diagnoseWithRules(input: DiagnosisInput): DiagnosisOutput {
   const clientText = input.messages.filter((m) => m.from === "client").map((m) => m.text).join("\n");
   const first = input.owner.name.split(" ")[0] ?? input.owner.name;
@@ -219,7 +227,7 @@ export function diagnoseWithRules(input: DiagnosisInput): DiagnosisOutput {
   const amount = /\$\s?([\d,]+(?:\.\d{2})?)/.exec(clientText)?.[1] ?? null;
   const base = {
     confidence: reason === "unknown" ? 0.3 : 0.6,
-    evidence: clientText ? [{ source: "client_message" as const, quote: clientText.length > 160 ? `${clientText.slice(0, 160).replace(/\s+\S*$/, "")}…` : clientText }] : [{ source: "invoice" as const, quote: `${input.invoice.days_overdue} days overdue, ${input.reminders.sent} reminders sent` }],
+    evidence: clientText ? [{ source: "client_message" as const, quote: matchingSentence(clientText, reason) }] : [{ source: "invoice" as const, quote: `${input.invoice.days_overdue} days overdue, ${input.reminders.sent} reminders sent` }],
     extracted: { po_number: po, new_contact_email: email, promised_date: null, proposed_first_payment: amount, disputed_item: null },
     plan: null,
     discount_percent: null,

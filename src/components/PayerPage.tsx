@@ -222,6 +222,9 @@ export function PayerPage({ token }: { token: string }) {
                         </li>
                       ))}
                     </ol>
+                    <p className="mt-3 text-xs leading-relaxed text-ink-soft">
+                      If you accept, {v.business}&rsquo;s PayPal invoice will allow part-payments, starting with {money(o.installments[0]!.amount_minor, cur)}. Nothing is charged automatically: you pay each installment yourself with PayPal by its date. The total stays {money(o.installments.reduce((s, i) => s + i.amount_minor, 0), cur)}, with no fees or interest added.
+                    </p>
                     <Button variant="money" className="mt-3 w-full" busy={accepting === o.id} disabled={!!accepting} onClick={() => accept(o.id)}>
                       Accept this plan
                     </Button>

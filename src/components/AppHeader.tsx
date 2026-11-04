@@ -30,7 +30,7 @@ export function AppHeader({ mode, business, right }: { mode?: Mode; business?: s
             </Link>
           ))}
         </nav>
-        <div className="ml-auto flex flex-wrap items-center gap-2 text-xs">
+        <div className="flex w-full flex-wrap items-center gap-2 text-xs sm:ml-auto sm:w-auto">
           {mode && (
             <>
               <span
@@ -38,7 +38,7 @@ export function AppHeader({ mode, business, right }: { mode?: Mode; business?: s
                 className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 ${mode.paypal === "sandbox" ? "bg-ok-wash text-ok" : "bg-marigold-wash text-marigold-deep"}`}
               >
                 <span aria-hidden className={`size-1.5 rounded-full ${mode.paypal === "sandbox" ? "bg-ok" : "bg-marigold-deep"}`} />
-                {mode.paypal === "sandbox" ? "PayPal sandbox" : mode.paypal === "misconfigured" ? "PayPal misconfigured" : "Simulation, not PayPal"}
+                {mode.paypal === "sandbox" ? "PayPal sandbox" : mode.paypal === "misconfigured" ? "PayPal misconfigured" : <span>Simulation<span className="hidden sm:inline">, not PayPal</span></span>}
               </span>
               <span title={mode.model ?? "Set ANTHROPIC_API_KEY to enable Claude"} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 ${mode.ai === "claude" ? "bg-ok-wash text-ok" : "bg-rule/60 text-ink-soft"}`}>
                 <span aria-hidden className={`size-1.5 rounded-full ${mode.ai === "claude" ? "bg-ok" : "bg-ink-faint"}`} />

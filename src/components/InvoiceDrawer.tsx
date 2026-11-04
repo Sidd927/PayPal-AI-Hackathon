@@ -1,10 +1,10 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { invoiceDetail } from "@/lib/services/board";
-import { REASON_META } from "@/lib/domain";
+import { ACTION_META, REASON_META } from "@/lib/domain";
 import { api, money, relTime, shortDate } from "@/lib/client";
 import { ActionCard } from "./ActionCard";
-import { Button, ReasonPhrase, Spinner, StatusPill } from "./ui";
+import { Button, ReasonPhrase, RiskPill, Spinner, StatusPill } from "./ui";
 
 type Detail = NonNullable<ReturnType<typeof invoiceDetail>>;
 
@@ -145,8 +145,8 @@ export function InvoiceDrawer({ id, onClose, onChanged, version }: { id: string;
 
             {/* Diagnosis */}
             {row.open && (
-              <section aria-labelledby="diag-h" className="rounded-[var(--radius-soft)] border border-rule bg-surface p-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
+              <section aria-labelledby="diag-h" className="rounded-[var(--radius-soft)] border border-rule bg-surface">
+                <div className="flex flex-wrap items-start justify-between gap-3 p-5 pb-0">
                   <div>
                     <h3 id="diag-h" className="text-sm text-ink-soft">Why it&rsquo;s stuck</h3>
                     <div className="mt-1">
@@ -158,31 +158,94 @@ export function InvoiceDrawer({ id, onClose, onChanged, version }: { id: string;
                   </Button>
                 </div>
                 {d.diagnosis ? (
-                  <>
-                    <p className="mt-3 text-ink">{d.diagnosis.summary}</p>
-                    <div className="mt-3 flex items-center gap-3 text-xs text-ink-faint">
+                  <div className="p-5 pt-3">
+                    <p className="text-ink">{d.diagnosis.summary}</p>
+                    <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-ink-faint">
                       <span className="flex h-1.5 w-24 overflow-hidden rounded-full bg-rule" aria-hidden>
                         <span className="bg-ink" style={{ width: `${Math.round(d.diagnosis.confidence * 100)}%` }} />
                       </span>
-                      <span>
-                        {Math.round(d.diagnosis.confidence * 100)}% confidence, {d.diagnosis.source === "ai" ? `by ${d.diagnosis.model}` : "rules only (AI not configured)"}, {relTime(d.diagnosis.created_at)}
+                      <span title="Confidence is the model's own estimate, prompted to stay below 50% when the only signal is silence and above 85% only when the client states the blocker. It is not calibrated against outcomes yet.">
+                        {Math.round(d.diagnosis.confidence * 100)}% confidence (self-reported), {d.diagnosis.source === "ai" ? `by ${d.diagnosis.model}` : "rules only, AI not configured"}, {relTime(d.diagnosis.created_at)}
                       </span>
                     </div>
-                    {d.diagnosis.evidence.length > 0 && (
-                      <ul className="mt-4 space-y-2">
-                        {d.diagnosis.evidence.map((e, i) => (
-                          <li key={i} className="border-l-2 border-rule-strong pl-3 text-sm text-ink-soft">
-                            <span className="font-display italic">{e.quote}</span>
-                            <span className="ml-1 text-xs text-ink-faint">({e.source.replace("_", " ")})</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    <p className="mt-4 text-xs text-ink-faint">{REASON_META[d.diagnosis.reason].description}</p>
-                  </>
+
+                    <dl className="mt-5 space-y-4 text-sm">
+                      {d.diagnosis.evidence.length > 0 && (
+                        <div>
+                          <dt className="text-xs text-ink-faint">Evidence: what was actually said or recorded</dt>
+                          <dd className="mt-1.5 space-y-2">
+                            {d.diagnosis.evidence.map((e, i) => (
+                              <p key={i} className="border-l-2 border-rule-strong pl-3 text-ink-soft">
+                                <span className="font-display italic">{e.quote}</span>
+                                <span className="ml-1 text-xs text-ink-faint">({e.source.replace("_", " ")})</span>
+                              </p>
+                            ))}
+                          </dd>
+                        </div>
+                      )}
+                      {d.diagnosis.recommendation.inference && d.diagnosis.recommendation.inference !== "None" && (
+                        <div>
+                          <dt className="text-xs text-ink-faint">Inference: what Unstuck concludes that wasn&rsquo;t said outright</dt>
+                          <dd className="mt-1 text-ink-soft">{d.diagnosis.recommendation.inference}</dd>
+                        </div>
+                      )}
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <dt className="text-xs text-ink-faint">Recommended</dt>
+                          <dd className="mt-1 text-ink">{ACTION_META[d.diagnosis.recommendation.action].label}</dd>
+                          <dd className="text-ink-soft">{d.diagnosis.recommendation.rationale}</dd>
+                        </div>
+                        {d.diagnosis.recommendation.expected_outcome && (
+                          <div>
+                            <dt className="text-xs text-ink-faint">If it works</dt>
+                            <dd className="mt-1 text-ink-soft">{d.diagnosis.recommendation.expected_outcome}</dd>
+                          </div>
+                        )}
+                      </div>
+                      {(d.diagnosis.recommendation.risks?.length ?? 0) > 0 && (
+                        <div>
+                          <dt className="text-xs text-ink-faint">Risks of acting</dt>
+                          <dd className="mt-1">
+                            <ul className="list-disc space-y-0.5 pl-5 text-ink-soft">
+                              {d.diagnosis.recommendation.risks!.map((r, i) => (
+                                <li key={i}>{r}</li>
+                              ))}
+                            </ul>
+                          </dd>
+                        </div>
+                      )}
+                      {(d.diagnosis.recommendation.alternatives?.length ?? 0) > 0 && (
+                        <div>
+                          <dt className="text-xs text-ink-faint">Also considered</dt>
+                          <dd className="mt-1 space-y-0.5 text-ink-soft">
+                            {d.diagnosis.recommendation.alternatives!.map((a, i) => (
+                              <p key={i}>
+                                <span className="text-ink">{ACTION_META[a.action].label}:</span> {a.why}
+                              </p>
+                            ))}
+                          </dd>
+                        </div>
+                      )}
+                    </dl>
+                  </div>
                 ) : (
-                  <p className="mt-3 text-sm text-ink-soft">Unstuck hasn&rsquo;t looked at this invoice yet. Diagnose it to see why it&rsquo;s unpaid and what to do next.</p>
+                  <p className="p-5 pt-3 text-sm text-ink-soft">Unstuck hasn&rsquo;t looked at this invoice yet. Run the agent, or diagnose just this invoice.</p>
                 )}
+                <details className="border-t border-rule px-5 py-3 text-sm">
+                  <summary className="flex cursor-pointer items-center justify-between gap-3 text-ink-soft">
+                    <span>Why this risk rating</span>
+                    <RiskPill risk={row.risk} />
+                  </summary>
+                  <ul className="mt-2 space-y-1">
+                    {row.risk.factors.map((f, i) => (
+                      <li key={i} className="flex justify-between gap-4">
+                        <span className="text-ink-soft">{f.label}</span>
+                        <span className={`tabular ${f.points > 0 ? "text-alert" : f.points < 0 ? "text-ok" : "text-ink-faint"}`}>{f.points > 0 ? `+${f.points}` : f.points}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-xs text-ink-faint">A transparent heuristic, not a trained model: each factor and its weight is listed here.</p>
+                </details>
               </section>
             )}
 

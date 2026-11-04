@@ -74,3 +74,15 @@ export function Spinner({ label }: { label: string }) {
     </span>
   );
 }
+
+/** Transparent risk badge: the title lists every factor and its points. */
+export function RiskPill({ risk }: { risk: { score: number; band: "low" | "watch" | "high"; factors: { label: string; points: number }[] } }) {
+  const k = { low: "bg-ok-wash text-ok", watch: "bg-marigold-wash text-marigold-deep", high: "bg-alert-wash text-alert" }[risk.band];
+  const label = { low: "Low risk", watch: "Watch", high: "High risk" }[risk.band];
+  return (
+    <span title={risk.factors.map((f) => `${f.points >= 0 ? "+" : ""}${f.points}  ${f.label}`).join("\n")} className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium tabular ${k}`}>
+      {label}
+      <span className="opacity-70">{risk.score}</span>
+    </span>
+  );
+}

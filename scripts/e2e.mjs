@@ -60,12 +60,14 @@ try {
   check("hero sentence shows money owed", /owed \$20,450 across seven invoices/.test(await page.getByRole("heading", { level: 1 }).innerText()));
   await page.screenshot({ path: path.join(OUT, "01-board-before.png") });
 
-  await page.getByRole("button", { name: /Diagnose all/ }).click();
-  await page.getByText(/Diagnosed 7 open invoices/).waitFor({ timeout: 120_000 });
+  await page.getByRole("button", { name: /^Run the agent/ }).click();
+  await page.getByText(/Agent run finished/).waitFor({ timeout: 120_000 });
+  check("agent run trace is visible", (await page.getByRole("heading", { name: /Last agent run/ }).count()) === 1);
   await page.waitForTimeout(800);
   const grid = page.locator(".ag-grid-scrolling-rows");
   check("board shows reasons", (await grid.getByText("Missing PO / AP details").count()) === 1 && (await grid.getByText("Cash is tight").count()) === 1 && (await grid.getByText("Disputing the work").count()) === 1);
   check("friendly reminder sent automatically", (await page.getByText(/Reminder delivered/).count()) > 0);
+  check("risk column ranks a high-risk invoice first", /High risk/.test(await grid.locator(".ag-row").first().innerText()));
   await page.screenshot({ path: path.join(OUT, "02-board-diagnosed.png") });
 
   // Owner approves the PO fix from the drawer.
@@ -103,7 +105,7 @@ try {
   await page.bringToFront();
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForTimeout(800);
-  check("cash unstuck reflects payment", /\$400/.test(await page.getByText(/Collected after Unstuck stepped in/).innerText()));
+  check("cash unstuck reflects payment", /\$400/.test(await page.getByText(/Recovered after Unstuck acted/).innerText()));
   await page.screenshot({ path: path.join(OUT, "07-board-after.png") });
 
   // Activity log and rules pages render.

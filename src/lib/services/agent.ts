@@ -51,7 +51,6 @@ export async function runAgent(trigger: "manual" | "schedule" | "demo" = "manual
     for (const r of order) {
       const inv = repo.getInvoice(r.id);
       if (!inv || !isOpenStatus(inv.status)) continue;
-      const tag = `${r.client}: `;
 
       // 2a. Plan installments coming due → deterministic reminder (policy decides if it can go out).
       const plan = repo.activePlan(inv.id);
@@ -73,9 +72,9 @@ export async function runAgent(trigger: "manual" | "schedule" | "demo" = "manual
           });
           sum.followUps++;
           tally(a.decision, a.status);
-          step(inv.id, { kind: "follow_up", label: `${tag}installment ${idx} reminder ${a.status === "executed" ? "sent via PayPal" : a.decision === "approve" ? "waiting for your approval" : "blocked"}`, detail: a.reasons.join("; "), status: a.status === "executed" ? "ok" : "info" });
+          step(inv.id, { kind: "follow_up", label: `Installment ${idx} reminder ${a.status === "executed" ? "sent via PayPal" : a.decision === "approve" ? "waiting for your approval" : "blocked"}`, detail: a.reasons.join("; "), status: a.status === "executed" ? "ok" : "info" });
         } else {
-          step(inv.id, { kind: "follow_up", label: `${tag}plan ${prog.rows.filter((x) => x.state === "paid").length}/${prog.rows.length} paid, nothing due`, status: "skip" });
+          step(inv.id, { kind: "follow_up", label: `Plan ${prog.rows.filter((x) => x.state === "paid").length}/${prog.rows.length} paid, nothing due`, status: "skip" });
         }
         continue; // An active plan is the remedy; don't re-diagnose underneath it.
       }
@@ -83,11 +82,11 @@ export async function runAgent(trigger: "manual" | "schedule" | "demo" = "manual
       // 2b. Missed promise → force a fresh diagnosis with that fact in context.
       const promise = promiseState(inv.id, today);
       const forced = opts.force || promise.promise_missed;
-      if (promise.promise_missed) step(inv.id, { kind: "follow_up", label: `${tag}promise to pay by ${formatDate(promise.promised_by)} was missed`, status: "warn" });
+      if (promise.promise_missed) step(inv.id, { kind: "follow_up", label: `Promise to pay by ${formatDate(promise.promised_by)} was missed`, status: "warn" });
 
       // 3. Gather → diagnose → plan → rules → act
       try {
-        const res = await diagnoseInvoice(inv.id, { force: forced, onStep: (s) => step(inv.id, { ...s, label: tag + s.label }) });
+        const res = await diagnoseInvoice(inv.id, { force: forced, onStep: (s) => step(inv.id, s) });
         if (res.skipped) sum.unchanged++;
         else {
           sum.diagnosed++;
@@ -95,7 +94,7 @@ export async function runAgent(trigger: "manual" | "schedule" | "demo" = "manual
         }
       } catch (e) {
         sum.errors++;
-        step(inv.id, { kind: "diagnose", label: `${tag}diagnosis failed`, detail: (e as Error).message, status: "error" });
+        step(inv.id, { kind: "diagnose", label: "Diagnosis failed", detail: (e as Error).message, status: "error" });
       }
     }
 
@@ -125,6 +124,12 @@ export async function runAgent(trigger: "manual" | "schedule" | "demo" = "manual
 export function runView(id?: string) {
   const run = id ? repo.getRun(id) : repo.latestRun();
   if (!run) return null;
-  return { ...run, summary: run.summary_json ? (JSON.parse(run.summary_json) as RunSummary) : null, summary_json: undefined, steps: repo.listSteps(run.id) };
+  const names = new Map(repo.listInvoices().map((i) => [i.id, i.recipient_business ?? i.recipient_name ?? i.number ?? "Invoice"]));
+  return {
+    ...run,
+    summary: run.summary_json ? (JSON.parse(run.summary_json) as RunSummary) : null,
+    summary_json: undefined,
+    steps: repo.listSteps(run.id).map((s) => ({ ...s, client: s.invoice_id ? names.get(s.invoice_id) ?? null : null })),
+  };
 }
 

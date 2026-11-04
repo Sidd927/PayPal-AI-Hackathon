@@ -4,6 +4,7 @@ import type { ActionView } from "@/lib/services/actions";
 import { ACTION_META, type ActionType, type Installment } from "@/lib/domain";
 import { api, money, relTime, shortDate } from "@/lib/client";
 import { Button, StatusPill } from "./ui";
+import { useToast } from "./Toast";
 
 const ORIGIN: Record<string, string> = { agent: "Unstuck suggests", payer: "Your client chose", owner: "You asked", system: "Unstuck" };
 
@@ -40,17 +41,44 @@ export function ActionCard({ action, currency, clientName, onChanged, compact }:
   const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showChecks, setShowChecks] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const toast = useToast();
   const editable = action.status === "proposed" && type === "send_reminder";
   const edited = editable && (subject !== p.subject || note !== p.note);
 
+  /** Plain-language description of the PayPal change, shown before any money-moving approval. */
+  function consequence(): string {
+    switch (type) {
+      case "offer_payment_plan":
+        return `PayPal will allow partial payments on this invoice, with a minimum of ${money(p.installments[0].amount_minor, currency)} now, and the client will be emailed the updated invoice.`;
+      case "add_early_payment_discount":
+        return `PayPal will apply a ${p.percent}% discount if the client pays by ${shortDate(p.expires_on)}. You'll receive less if they take it.`;
+      case "record_external_payment":
+        return `PayPal will record ${money(p.amount_minor, currency)} as received by ${String(p.method).toLowerCase().replace("_", " ")}. Only confirm if the money has arrived in your bank.`;
+      default:
+        return "";
+    }
+  }
+
   async function decide(kind: "approve" | "reject") {
+    if (kind === "approve" && meta.movesMoney && !confirming) {
+      setConfirming(true);
+      return;
+    }
+    setConfirming(false);
     setBusy(kind);
     setError(null);
     try {
       if (kind === "approve") {
         const res = await api<ActionView>(`/api/actions/${action.id}/approve`, { body: edited ? { params: { ...p, subject, note } } : {} });
-        if (res.status === "failed") setError(res.error ?? "PayPal rejected the request");
-      } else await api(`/api/actions/${action.id}/reject`, { body: {} });
+        if (res.status === "failed") {
+          setError(res.error ?? "PayPal rejected the request");
+          toast(`${meta.label} failed: ${res.error ?? "PayPal rejected the request"}`, "error");
+        } else toast(`${meta.label}: ${(res.result as { summary?: string } | null)?.summary ?? "done"}${clientName ? ` for ${clientName}` : ""}.`);
+      } else {
+        await api(`/api/actions/${action.id}/reject`, { body: {} });
+        toast(`Declined: ${meta.label}${clientName ? ` for ${clientName}` : ""}.`, "info");
+      }
       onChanged();
     } catch (e) {
       setError((e as Error).message);
@@ -171,7 +199,21 @@ export function ActionCard({ action, currency, clientName, onChanged, compact }:
         </div>
       )}
 
-      {action.status === "proposed" && (
+      {confirming && (
+        <div role="alertdialog" aria-labelledby={`c-${action.id}`} className="mt-4 rounded-[var(--radius-tight)] border border-marigold/70 bg-marigold-wash/60 p-3 text-sm">
+          <p id={`c-${action.id}`} className="text-ink">{consequence()}</p>
+          <div className="mt-3 flex gap-2">
+            <Button variant="money" autoFocus onClick={() => decide("approve")} busy={busy === "approve"}>
+              Yes, {meta.verb.toLowerCase()}
+            </Button>
+            <Button variant="ghost" onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {action.status === "proposed" && !confirming && (
         <div className="mt-4 flex flex-wrap gap-2">
           <Button variant={meta.movesMoney ? "money" : "primary"} busy={busy === "approve"} disabled={!!busy} onClick={() => decide("approve")}>
             {type === "escalate_to_owner" ? "Mark as handled" : edited ? `${meta.verb} with my edits` : meta.verb}

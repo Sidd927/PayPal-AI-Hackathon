@@ -98,3 +98,5 @@ body {
 /* AG Grid: let our renderers own vertical rhythm */
 .ag-theme-unstuck .ag-cell { display: flex; align-items: center; }
 .ag-theme-unstuck .ag-row { cursor: pointer; }
+.ag-theme-unstuck .ag-cell-data-changed { background-color: var(--color-marigold-wash) !important; }
+.ag-theme-unstuck .ag-cell-data-changed-animation { background-color: transparent !important; }

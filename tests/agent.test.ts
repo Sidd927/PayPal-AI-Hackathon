@@ -87,7 +87,7 @@ describe("agent run (simulation, rules-only)", () => {
     await payerAcceptOffer(row, turn.offerIds.at(-1)!);
     const run = runView((await runAgent("manual")).runId)!;
     const step = run.steps.find((s) => s.kind === "follow_up" && s.invoice_id === ids.bluebird);
-    expect(step?.label).toMatch(/installment 1 reminder (sent via PayPal|waiting)/);
+    expect(step?.label).toMatch(/Installment 1 reminder (sent via PayPal|waiting)/);
     expect(run.steps.some((s) => s.kind === "diagnose" && s.invoice_id === ids.bluebird)).toBe(false); // plan is the remedy
   });
 
@@ -95,7 +95,7 @@ describe("agent run (simulation, rules-only)", () => {
     await runAgent("manual");
     repo.logEvent({ invoice_id: ids.atlas!, kind: "promise_to_pay", actor: "client", summary: "promise", data: { date: addDays(todayIso(), -2), note: "" } });
     const run = runView((await runAgent("manual")).runId)!;
-    expect(run.steps.some((s) => s.invoice_id === ids.atlas && /promise to pay .* was missed/.test(s.label))).toBe(true);
+    expect(run.steps.some((s) => s.invoice_id === ids.atlas && /Promise to pay .* was missed/.test(s.label))).toBe(true);
     expect(run.steps.some((s) => s.invoice_id === ids.atlas && s.kind === "diagnose" && s.status !== "skip")).toBe(true);
   });
 

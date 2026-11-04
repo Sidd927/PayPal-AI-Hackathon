@@ -1,11 +1,13 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { type Ref, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { AgGridReact, type CustomCellRendererProps } from "ag-grid-react";
 import { AllCommunityModule, type ColDef, type GetRowIdParams, type IRowNode, ModuleRegistry, type RowClassParams, themeQuartz } from "ag-grid-community";
 import type { BoardRow } from "@/lib/services/board";
 import { ACTION_META } from "@/lib/domain";
 import { money, shortDate } from "@/lib/client";
-import { ReasonPhrase } from "./ui";
+import { ReasonPhrase, RiskPill } from "./ui";
+
+export type BoardHandle = { exportCsv: () => void };
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -85,6 +87,12 @@ function ReasonCell(p: CustomCellRendererProps<BoardRow>) {
   );
 }
 
+function RiskCell(p: CustomCellRendererProps<BoardRow>) {
+  const r = p.data;
+  if (!r || (r as unknown as PinnedTotal).__total || !r.open) return null;
+  return <RiskPill risk={r.risk} />;
+}
+
 function NextCell(p: CustomCellRendererProps<BoardRow>) {
   const r = p.data;
   if (!r || (r as unknown as PinnedTotal).__total || !r.open) return null;
@@ -118,7 +126,9 @@ export function Board({
   onOpen,
   selectedId,
   flashIds,
+  ref,
 }: {
+  ref?: Ref<BoardHandle>;
   rows: BoardRow[];
   reasonFilter: string | null;
   quickFilter: string;
@@ -127,6 +137,26 @@ export function Board({
   flashIds: string[];
 }) {
   const gridRef = useRef<AgGridReact<BoardRow>>(null);
+  useImperativeHandle(ref, () => ({
+    exportCsv: () =>
+      gridRef.current?.api?.exportDataAsCsv({
+        fileName: `receivables-${new Date().toISOString().slice(0, 10)}.csv`,
+        skipPinnedBottom: true,
+        processCellCallback: (c) => {
+          const r = c.node?.data as BoardRow | undefined;
+          if (!r) return c.value;
+          switch (c.column.getColId()) {
+            case "client": return `${r.client} (${r.number ?? ""})`;
+            case "dueMinor": return (r.dueMinor / 100).toFixed(2);
+            case "timing": return r.open ? String(r.daysOverdue) : "settled";
+            case "reason": return r.reason ?? "";
+            case "risk": return r.open ? String(r.risk.score) : "";
+            case "next": return r.next ? `${r.next.label} (${r.next.status})` : "";
+            default: return c.value;
+          }
+        },
+      }),
+  }));
 
   const columnDefs = useMemo<ColDef<BoardRow>[]>(
     () => [
@@ -139,8 +169,17 @@ export function Board({
         valueGetter: (p) => (p.data && p.data.open ? p.data.daysOverdue : -100_000),
         cellRenderer: AgeCell,
         width: 140,
+        sortingOrder: ["desc", "asc"],
+      },
+      {
+        headerName: "Risk",
+        colId: "risk",
+        valueGetter: (p) => (p.data && p.data.open ? p.data.risk.score : -1),
+        cellRenderer: RiskCell,
+        width: 118,
         sort: "desc",
         sortingOrder: ["desc", "asc"],
+        headerTooltip: "Transparent heuristic: hover a badge to see every factor and its points",
       },
       { headerName: "Why it's stuck", field: "reason", cellRenderer: ReasonCell, flex: 1.4, minWidth: 200, getQuickFilterText: (p) => p.data?.summary ?? "", tooltipField: "summary" },
       { headerName: "Next step", colId: "next", cellRenderer: NextCell, flex: 1.2, minWidth: 180, sortable: false },
