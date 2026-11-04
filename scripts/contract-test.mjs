@@ -153,7 +153,7 @@ const check = (name, ok, detail = "") => {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`);
 };
 const api = async (p, body) => {
-  const r = await fetch(`${APP}${p}`, { method: body ? "POST" : "GET", headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+  const r = await fetch(`${APP}${p}`, { method: body ? "POST" : "GET", headers: body ? { ...OWNER, "content-type": "application/json" } : { ...OWNER }, body: body ? JSON.stringify(body) : undefined });
   return { status: r.status, data: await r.json() };
 };
 
@@ -171,7 +171,9 @@ const env = {
   APP_BASE_URL: APP,
   UNSTUCK_MODE: "",
   ANTHROPIC_API_KEY: "",
+  OWNER_BASIC_AUTH: "owner:contract-test-only",
 };
+const OWNER = { authorization: `Basic ${Buffer.from(env.OWNER_BASIC_AUTH).toString("base64")}` };
 let app;
 try {
   // Seed through the real seeding script (live gateway → mock PayPal).
@@ -194,6 +196,8 @@ try {
     } catch {}
     await new Promise((r) => setTimeout(r, 500));
   }
+  const locked = await fetch(`${APP}/api/board`).then((r) => r.status);
+  check("owner APIs require the owner password", locked === 401, `status ${locked}`);
   const health = await api("/api/health");
   check("app runs in PayPal sandbox mode", health.data.paypal === "sandbox" && health.data.webhookConfigured, JSON.stringify(health.data));
 
@@ -276,7 +280,7 @@ try {
 
   // Owner adds an early-payment discount to Fernwood.
   const fern = byClient("Fernwood Architects");
-  const disc = await fetch(`${APP}/api/invoices/${fern.id}/actions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "add_early_payment_discount", params: { percent: 2, expires_on: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10) } }) }).then((r) => r.json());
+  const disc = await fetch(`${APP}/api/invoices/${fern.id}/actions`, { method: "POST", headers: { ...OWNER, "content-type": "application/json" }, body: JSON.stringify({ type: "add_early_payment_discount", params: { percent: 2, expires_on: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10) } }) }).then((r) => r.json());
   check("early-payment discount → PayPal conditional rule", disc.status === "executed" && invoices.get(fern.id).conditional_rules?.[0]?.conditional_rule_value === "2");
 } catch (e) {
   check("contract run completed", false, e.stack);

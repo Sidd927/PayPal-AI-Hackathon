@@ -56,7 +56,7 @@ export async function proposeAction(invoiceId: string, proposed: ProposedAction,
   });
   if (decision.decision === "auto" && opts.executeIfAuto !== false) {
     repo.transitionAction(id, ["proposed"], "approved");
-    await executeAction(id);
+    await executeAction(id, { ownerApproved: false });
   }
   return viewAction(repo.getAction(id)!);
 }
@@ -76,7 +76,7 @@ export async function approveAction(id: string, edits?: { params?: unknown }) {
   }
   if (!repo.transitionAction(id, ["proposed"], "approved", { params_json: paramsJson })) throw new Error("Action was already decided");
   repo.logEvent({ invoice_id: a.invoice_id, kind: "action_approved", actor: "owner", summary: `You approved: ${ACTION_META[a.type].label}`, data: { action_id: id } });
-  await executeAction(id);
+  await executeAction(id, { ownerApproved: true });
   return viewAction(repo.getAction(id)!);
 }
 
@@ -101,8 +101,18 @@ export function describePlan(installments: Installment[], currency: string) {
   return installments.map((i, n) => `${n + 1}) ${formatMoney(i.amount_minor, currency)} by ${formatDate(i.due_date)}`).join("  ");
 }
 
-/** Execute an approved action against PayPal. Never throws: failures are recorded on the action. */
-export async function executeAction(id: string): Promise<ActionRow> {
+class StaleActionError extends Error {}
+
+/**
+ * Execute an approved action against PayPal. Never throws: failures are recorded on the action.
+ *
+ * The rules are evaluated again against PayPal's *current* invoice state before anything is sent, so an
+ * approval can't be replayed onto a changed invoice (paid since, amount changed, disputed, reminder sent
+ * in the meantime). `ownerApproved` says whether the owner signed off: their approval satisfies an
+ * "approve" decision but never overrides a "block". An action that was automatic when proposed but now
+ * needs approval goes back to the owner instead of running.
+ */
+export async function executeAction(id: string, opts: { ownerApproved: boolean }): Promise<ActionRow> {
   const a = repo.getAction(id);
   if (!a) throw new Error("Action not found");
   if (!repo.transitionAction(id, ["approved"], "executing")) return repo.getAction(id)!;
@@ -115,6 +125,17 @@ export async function executeAction(id: string): Promise<ActionRow> {
 
   try {
     const row = await refreshInvoice(a.invoice_id); // always act on PayPal's current state
+    const fresh = evaluateAction(
+      { type, params, origin: opts.ownerApproved ? "owner" : a.origin, rationale: a.rationale } as ProposedAction,
+      policyContextFor(row),
+      repo.getPolicy(),
+    );
+    if (fresh.decision === "block") throw new StaleActionError(`Rules re-checked against the current invoice and blocked it: ${fresh.reasons.join("; ")}`);
+    if (fresh.decision === "approve" && !opts.ownerApproved) {
+      repo.transitionAction(id, ["executing"], "proposed", { decision: "approve", decision_reasons_json: JSON.stringify(fresh.reasons), checks_json: JSON.stringify(fresh.checks) });
+      repo.logEvent({ invoice_id: a.invoice_id, kind: "action_proposed", actor: "unstuck", summary: `${ACTION_META[type].label} now needs your approval: the invoice changed since it was proposed`, data: { action_id: id, decision: fresh } });
+      return repo.getAction(id)!;
+    }
     const currency = row.currency;
     switch (type) {
       case "send_reminder": {
@@ -189,7 +210,7 @@ export async function executeAction(id: string): Promise<ActionRow> {
     repo.logEvent({ invoice_id: a.invoice_id, kind: "action_executed", actor: a.origin === "owner" ? "owner" : "unstuck", summary: `${ACTION_META[type].label}: ${summary}`, data: { action_id: id, receipts } });
   } catch (err) {
     const e = err as Error & { status?: number };
-    const detail = err instanceof PayPalApiError ? { status: err.status, name: err.name_, debugId: err.debugId, details: err.details } : { status: e.status };
+    const detail = err instanceof PayPalApiError ? { status: err.status, name: err.name_, debugId: err.debugId, details: err.details } : err instanceof StaleActionError ? { stale: true } : { status: e.status };
     repo.transitionAction(id, ["executing"], "failed", { error: e.message, result_json: JSON.stringify({ receipts, error: detail }) });
     repo.logEvent({ invoice_id: a.invoice_id, kind: "action_failed", actor: "unstuck", summary: `${ACTION_META[type].label} failed: ${e.message}`, data: { action_id: id, ...detail } });
   }

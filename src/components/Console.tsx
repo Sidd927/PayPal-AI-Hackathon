@@ -33,7 +33,7 @@ const cap = (s: string) => s.replace(/^./, (c) => c.toUpperCase());
 
 function HeroSentence({ s }: { s: Snapshot }) {
   const k = s.kpis;
-  const cur = s.rows[0]?.currency ?? "USD";
+  const cur = s.kpis.currency;
   const late = s.rows.filter((r) => r.open && r.daysOverdue > 0);
   const reasons = new Set(late.map((r) => r.reason).filter((r): r is StuckReason => !!r && r !== "unknown" && r !== "not_due"));
   if (k.openCount === 0) return <h1 className="font-display text-[2rem] leading-[1.15] text-ink sm:text-[2.5rem]">Nothing is owed to you right now.</h1>;
@@ -55,10 +55,10 @@ function HeroSentence({ s }: { s: Snapshot }) {
 function Figures({ s }: { s: Snapshot }) {
   const k = s.kpis;
   const o = s.outlook;
-  const cur = s.rows[0]?.currency ?? "USD";
+  const cur = s.kpis.currency;
   const expected = o.committedMinor + o.inTransitMinor + o.dueMinor;
   const items = [
-    { label: "Waiting to receive", value: money(k.outstandingMinor, cur, true), note: `${k.openCount} open invoice${k.openCount === 1 ? "" : "s"}` },
+    { label: "Waiting to receive", value: money(k.outstandingMinor, cur, true), note: `${k.openCount} open invoice${k.openCount === 1 ? "" : "s"}${k.excludedOtherCurrency ? `; ${k.excludedOtherCurrency} in other currencies not included` : ""}` },
     { label: "Overdue", value: money(k.overdueMinor, cur, true), note: k.overdueCount ? `${k.overdueCount} invoices, ${k.avgDaysOverdue} days late on average` : "Nothing overdue" },
     {
       label: "Expected in 30 days",
@@ -84,7 +84,7 @@ function Figures({ s }: { s: Snapshot }) {
 function ReasonStrip({ s, active, onPick }: { s: Snapshot; active: string | null; onPick: (r: string | null) => void }) {
   const entries = Object.entries(s.kpis.byReason).sort((a, b) => b[1].dueMinor - a[1].dueMinor);
   const total = entries.reduce((a, [, v]) => a + v.dueMinor, 0) || 1;
-  const cur = s.rows[0]?.currency ?? "USD";
+  const cur = s.kpis.currency;
   const color: Record<string, string> = { sky: "#3a6c8f", amber: "#9a6512", violet: "#6b4f93", rose: "#a13d4f", teal: "#2b7470", emerald: "#357049", slate: "#5b6670", stone: "#a9a395" };
   if (!entries.length || (entries.length === 1 && entries[0]![0] === "undiagnosed")) return null;
   return (
@@ -283,8 +283,8 @@ function ConsoleInner() {
                   <Button variant="money" className="mt-4 w-full py-2.5" onClick={() => run("run")} busy={busy === "run"} disabled={!!busy}>
                     {busy === "run" ? "Agent is working" : lastRun ? "Run the agent again" : "Run the agent"}
                   </Button>
-                  <p className="mt-3 border-t border-surface/15 pt-3 text-sm text-surface/75" title="Payments received on invoices after Unstuck first acted on them (reminder, plan, PO fix, recorded payment).">
-                    Recovered after Unstuck acted: <span className="font-display tabular text-base text-surface">{money(snap.kpis.cashUnstuckMinor, snap.rows[0]?.currency, true)}</span>
+                  <p className="mt-3 border-t border-surface/15 pt-3 text-sm text-surface/75" title="Payments PayPal recorded on invoices after Unstuck first acted on them. Shows timing, not proof that Unstuck caused the payment. Promises and plans are not counted.">
+                    Collected after Unstuck acted: <span className="font-display tabular text-base text-surface">{money(snap.kpis.cashUnstuckMinor, snap.kpis.currency, true)}</span>
                   </p>
                 </div>
                 <AgentRunTrace running={busy === "run"} initial={lastRun} onFinished={loadRun} />

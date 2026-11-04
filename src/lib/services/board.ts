@@ -114,6 +114,16 @@ function boardRow(inv: InvoiceRow, today: string): BoardRow {
 }
 
 /** "Cash unstuck": money collected on invoices after Unstuck first acted on them. */
+export function primaryCurrency(rows: { currency: string; open: boolean }[]) {
+  const counts = new Map<string, number>();
+  for (const r of rows.filter((x) => x.open)) counts.set(r.currency, (counts.get(r.currency) ?? 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? rows[0]?.currency ?? "USD";
+}
+
+/**
+ * Money collected on invoices after Unstuck first acted on them. Only payments PayPal reports
+ * (paid_minor) count; promises and plans never do. This is timing, not proof of causation.
+ */
 function cashUnstuck(invoices: InvoiceRow[]) {
   let total = 0;
   for (const inv of invoices) {
@@ -188,7 +198,11 @@ export function boardSnapshot() {
   const today = todayIso();
   const invoices = repo.listInvoices();
   const rows = invoices.map((i) => boardRow(i, today));
-  const open = rows.filter((r) => r.open);
+  // Money figures are never added across currencies: KPIs use the currency most open invoices are in,
+  // and the others are counted so the UI can say they were left out.
+  const currency = primaryCurrency(rows);
+  const allOpen = rows.filter((r) => r.open);
+  const open = allOpen.filter((r) => r.currency === currency);
   const riskOf = new Map(rows.map((r) => [r.id, r.risk.score]));
   const pending = repo
     .listActions({ status: "proposed" })
@@ -206,17 +220,19 @@ export function boardSnapshot() {
     mode: modeInfo(),
     policy: repo.getPolicy(),
     kpis: {
+      currency,
+      excludedOtherCurrency: allOpen.length - open.length,
       outstandingMinor: open.reduce((s, r) => s + r.dueMinor, 0),
       openCount: open.length,
       overdueMinor: open.filter((r) => r.daysOverdue > 0).reduce((s, r) => s + r.dueMinor, 0),
       overdueCount: open.filter((r) => r.daysOverdue > 0).length,
       pendingApprovals: pending.length,
-      cashUnstuckMinor: cashUnstuck(invoices),
+      cashUnstuckMinor: cashUnstuck(invoices.filter((i) => i.currency === currency)),
       avgDaysOverdue: overdue.length ? Math.round(overdue.reduce((s, r) => s + r.daysOverdue, 0) / overdue.length) : 0,
       atRiskCount: open.filter((r) => r.risk.band === "high").length,
       byReason,
     },
-    outlook: cashOutlook(rows, today),
+    outlook: cashOutlook(rows.filter((r) => r.currency === currency), today),
     lastRun: run ? { id: run.id, status: run.status, started_at: run.started_at, finished_at: run.finished_at, summary: run.summary_json ? JSON.parse(run.summary_json) : null } : null,
     rows,
     pending,

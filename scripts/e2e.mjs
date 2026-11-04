@@ -106,7 +106,7 @@ try {
   await page.bringToFront();
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForTimeout(800);
-  check("cash unstuck reflects payment", /\$400/.test(await page.getByText(/Recovered after Unstuck acted/).innerText()));
+  check("cash unstuck reflects payment", /\$400/.test(await page.getByText(/Collected after Unstuck acted/).innerText()));
   await page.screenshot({ path: path.join(OUT, "07-board-after.png") });
 
   // AG Studio insights report renders with live data.

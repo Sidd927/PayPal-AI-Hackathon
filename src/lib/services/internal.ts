@@ -5,5 +5,5 @@ import { executeAction } from "./actions";
 export async function approveActionInternal(id: string) {
   const a = repo.getAction(id);
   if (!a || a.decision !== "auto") throw new Error("Only policy-approved actions can be auto-approved");
-  if (repo.transitionAction(id, ["proposed"], "approved")) await executeAction(id);
+  if (repo.transitionAction(id, ["proposed"], "approved")) await executeAction(id, { ownerApproved: false });
 }

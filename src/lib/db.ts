@@ -317,13 +317,14 @@ export const repo = {
       .all(...args) as ActionRow[];
   },
   /** Atomically move an action from one status to another. Returns false if it was not in `from`. */
-  transitionAction(id: string, from: ActionStatus[], to: ActionStatus, patch: Partial<Pick<ActionRow, "result_json" | "error" | "params_json" | "paid_minor_before">> = {}) {
+  transitionAction(id: string, from: ActionStatus[], to: ActionStatus, patch: Partial<Pick<ActionRow, "result_json" | "error" | "params_json" | "paid_minor_before" | "decision" | "decision_reasons_json" | "checks_json">> = {}) {
     const ts = nowIso();
     const r = getDb()
       .prepare(
         `UPDATE actions SET status = @to,
            result_json = COALESCE(@result_json, result_json), error = @error,
            params_json = COALESCE(@params_json, params_json), paid_minor_before = COALESCE(@paid_minor_before, paid_minor_before),
+           decision = COALESCE(@decision, decision), decision_reasons_json = COALESCE(@decision_reasons_json, decision_reasons_json), checks_json = COALESCE(@checks_json, checks_json),
            decided_at = CASE WHEN @to IN ('approved','rejected') THEN @ts ELSE decided_at END,
            executed_at = CASE WHEN @to IN ('executed','failed') THEN @ts ELSE executed_at END
          WHERE id = @id AND status IN (${from.map((_, i) => `@f${i}`).join(",")})`,
@@ -336,6 +337,9 @@ export const repo = {
         error: patch.error ?? null,
         params_json: patch.params_json ?? null,
         paid_minor_before: patch.paid_minor_before ?? null,
+        decision: patch.decision ?? null,
+        decision_reasons_json: patch.decision_reasons_json ?? null,
+        checks_json: patch.checks_json ?? null,
         ...Object.fromEntries(from.map((f, i) => [`f${i}`, f])),
       });
     return r.changes === 1;
