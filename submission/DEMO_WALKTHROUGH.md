@@ -12,15 +12,23 @@ npm run dev
 
 Open <http://localhost:3000>. The demo studio loads automatically, and the header shows **Simulation, not PayPal** and **Rules only**.
 
-1. Read the sentence at the top: what's owed and why.
-2. Click **Run the agent** and watch the trace: sync, prioritise by risk, then gather, diagnose, plan, check rules and act for each client. Each row gets a stuck reason and a risk badge (hover it to see the factors). Lumen Yoga's reminder goes out automatically; five items wait in **Needs you**.
-3. Open **Northwind Logistics** (JC-1041). Read the evidence (quoted), the inference, the expected outcome and the risks. Expand **Why this risk rating** and **Policy checks**, then click **Update invoice**. The toast and receipt show the PayPal operation.
-4. Open **Harbor Dental**: the dispute is escalated with a suggested reply, and automatic reminders are paused.
-5. In **Needs you**, approve **Atlas Robotics**' cheque. A confirmation states exactly what PayPal will record before anything happens.
-6. Open **Bluebird Café** → **Open as the client**. Tap *Can I pay part now and the rest later?* → **Accept this plan** → **Simulate payment** ($400).
-7. Back on the console: Bluebird shows *Plan: 1 of 3 paid*, and "Collected after Unstuck acted" reads $400. Hover it: this is timing, not proof of causation, and promises are never counted.
-8. **Insights** (AG Studio): type a question in **Ask Insights**, e.g. "Which customers have the largest outstanding balance?" or "Build a report for invoices requiring human approval". Then try one it can't answer ("What's the weather?"). Click **Build your own report**, open the AI panel on the right and ask the same questions there: the *Unstuck Insights* agent runs inside AG Studio. Click a chart slice to cross-filter. **Activity** lists every decision and call. **Your rules** lets you change the limits; for example, set *Most installments* to 2 and ask for a plan again.
-9. **Reset demo** restores the scenario.
+1. Read the sentence at the top: what's owed and how much is late. Below it, **The resolution loop** shows all eight invoices in *Spotted*. Kestrel Media is marked red: its promise to pay has passed.
+2. Click **Run the agent** and watch the trace: sync, prioritise by risk, then gather, diagnose, plan, check rules and act for each client. The loop fills in from recorded results:
+   - Lumen's and Kestrel's follow-ups go out automatically within your rules (*Acted*);
+   - five fixes wait for you (*Waiting for you*).
+3. Click **Northwind Logistics** in the loop. Read the client's own words (quoted), the inference, the expected outcome and the risks. Expand **Why this risk rating** and **Policy checks**, then click **Update invoice**. The toast and receipt show the PayPal operation. The rules are re-checked against the current invoice before it runs.
+4. Open **Kestrel Media**: the client's promise is quoted, the missed date is cited as a recorded fact, and the inference says plainly that *why* is unknown. The follow-up has been sent.
+5. Open **Harbor Dental**: the dispute is escalated with a suggested reply, and PayPal's automatic reminders are paused.
+6. In **Needs you**, approve **Atlas Robotics**' cheque. A confirmation states exactly what PayPal will record before anything happens.
+7. Open **Bluebird Café** → **Open as the client**. Tap *Can I pay part now and the rest later?* → **Accept this plan** → **Simulate payment** ($400, labelled as simulated).
+8. Back on the console, Bluebird has moved to **Agreed**, shows *Plan: 1 of 3 paid*, and "Collected after Unstuck acted" reads $400. Hover the figure: it shows timing, not proof of causation, and promises are never counted.
+9. **Insights** (AG Studio): click a suggested question or type one, such as:
+   - "Which customers account for the highest overdue receivables?"
+   - "Which payment promises have been missed?"
+   - "What worked?"
+
+   Each answer names clients and amounts from the data. Try one it can't answer ("What's the weather?"). Click **Build your own report**, open the AI panel on the right and ask there: the same *Unstuck Insights* agent runs inside AG Studio.
+10. **Activity** lists every decision and PayPal call. **Your rules** lets you change the limits. **Reset demo** restores the scenario.
 
 ## Option B: real PayPal sandbox and Claude
 

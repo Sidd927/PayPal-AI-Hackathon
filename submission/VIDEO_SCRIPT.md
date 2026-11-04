@@ -1,28 +1,30 @@
-# Video Script (target 2:50, hard limit < 3:00)
+# Video Script and Shot List (target 2:45, hard limit < 3:00)
 
-**Record only after the live sandbox and Claude runs.** Both header badges must read "PayPal sandbox" and "Claude". No simulated footage presented as real; no unlicensed music; captions on. Request the AG Studio trial key first so the watermark is gone.
+**One story: Maya's studio, one morning.** It shows the full loop on screen: spot, understand, your OK, act in PayPal, agree with the client, verify, and back into the loop when a promise breaks.
 
-| Time | Screen | Narration |
-|---|---|---|
-| 0:00–0:15 | Board loads; the hero sentence | "Maya runs a two-person studio. She's owed twenty thousand dollars across seven PayPal invoices. Six are late, and every one is stuck for a different reason." |
-| 0:15–0:30 | Hover the figure row, then the reason strip | "More than half of US small businesses are waiting on invoices like these. Most tools, AI ones included, answer with another reminder. Unstuck finds out *why*, and fixes that, inside PayPal." |
-| 0:30–0:55 | Click **Run the agent**; the trace fills live (Sync → Prioritise → per-client Gather, Diagnose, Plan, Rules, Act) | "The agent syncs with PayPal, ranks invoices by risk, and works through each one. Lumen Yoga always pays, they forgot, so a friendly reminder already went out through PayPal, inside Maya's rules. Anything that changes money waits for her." |
-| 0:55–1:20 | Open Northwind: evidence quote, inference, recommendation, expected outcome; the action card with PO-88412 and the PayPal endpoint; click **Update invoice**; the receipt with a debug id | "Northwind's accounts-payable team needs a PO number. Here's exactly what the client said, what the agent infers, and what it recommends: add the PO and copy their AP inbox. One click, and PayPal re-sends the corrected invoice." |
-| 1:20–1:30 | Harbor Dental card: "Needs your judgement" | "Harbor Dental disputes the work. Unstuck won't pressure them: PayPal's reminders are paused and Maya gets a suggested reply." |
-| 1:30–2:10 | Phone frame: Bluebird's resolution page → "Can I pay part now…" → offers with plain-language terms → **Accept this plan** → **Pay $400 or more with PayPal** → sandbox checkout as the buyer | "Every reminder links here. Priya at Bluebird Café is short on cash. She asks for a plan. The assistant can only offer what Maya's rules allow, and Priya sees exactly what she's agreeing to. She accepts, PayPal switches the invoice to partial payments, and she pays the first four hundred dollars." |
-| 2:10–2:25 | Console: Bluebird row flashes, "Plan 1 of 3 paid", "Collected after Unstuck acted: $400"; Activity shows the verified webhook | "PayPal's webhook arrives, Unstuck verifies it, re-reads the invoice and moves the plan on. Four hundred dollars, unstuck." |
-| 2:25–2:38 | Insights (AG Studio): type "Build a report for invoices requiring human approval" → the approvals report opens with the answer above it | "Maya can just ask. Our agent, built on AG Studio's Agent Framework, answers from her data and builds the report. If it can't answer from the data, it says so." |
-| 2:38–2:50 | Your rules page, then the end card | "The agent proposes. Maya's rules decide. PayPal executes. Unstuck: get paid without the awkward chase." |
+**Honesty rules for the recording**
+- If the header reads **Simulation, not PayPal** and **Rules only**, say so in the first 20 seconds ("this is the demo mode; the same flow runs on the PayPal sandbox") and keep the badge visible.
+- Never describe a simulated payment as a PayPal payment. If the sandbox run has been done, record scenes 5–7 against it, with the badge reading **PayPal sandbox**.
+- Captions on. No music, or licensed music only. Request the AG Studio trial key first so the watermark is gone. If you can't, leave it; don't crop it out.
 
-## Prep
+## Shot list
 
-1. Run `npm run seed:sandbox` the same day; set `DEMO_PAYER_EMAIL` to the sandbox buyer; pre-log in the buyer on the phone.
-2. Run once before recording, so Claude diagnoses are cached and fast; then **Reset** with `npm run seed:sandbox` again for the take.
-3. Use 1440×900 with 110% zoom for the desktop shots.
-4. Record segments separately; cut the waits, never speed them up.
-5. If the webhook is slow on the day, press **Sync**. The narration still holds, since sync runs the same plan logic.
+| # | Time | Screen (what to click) | Narration |
+|---|---|---|---|
+| 1 | 0:00–0:18 | Dashboard, before the run. Slowly highlight the hero sentence, then the "Overdue" figure | "Maya runs a two-person design studio. She's owed twenty-one thousand dollars on eight PayPal invoices, and seven are late. Her invoicing tool can tell her *that*. It can't tell her *why*, or fix it." |
+| 2 | 0:18–0:40 | Click **Run the agent**; the trace fills live; scroll to **The resolution loop** as the stages fill | "Unstuck is an AI receivables-resolution agent. It syncs with PayPal and works through every invoice: it spots what's stuck, works out why, fixes what your rules allow, and follows it until the money arrives. This loop shows where every invoice is right now, computed from what actually happened." |
+| 3 | 0:40–1:05 | Click the **Northwind Logistics** chip → drawer: quoted evidence, then the inference, then the recommendation | "Northwind's accounts-payable team bounced the invoice for a missing PO number. Here's exactly what the client said, kept separate from what the agent infers. The fix isn't a reminder. It's putting PO-88412 on the invoice." |
+| 4 | 1:05–1:20 | Scroll to the action card → expand **Policy checks** → **Update invoice** → toast and receipt | "Changes that touch the invoice wait for Maya. She sees the rule checks, approves, and Unstuck re-checks the rules against PayPal's current invoice before PayPal re-sends it." |
+| 5 | 1:20–1:30 | Close the drawer; the **Kestrel Media** chip with the red mark; open it | "Kestrel promised to pay by the first. Nothing arrived. Unstuck noticed the broken promise, says honestly that it doesn't know why, and sent a kind, specific follow-up, inside Maya's rules." |
+| 6 | 1:30–2:05 | **Bluebird Café** → **Open as the client** (phone-width window). Tap "Can I pay part now…" → offers with consequences → **Accept this plan** → pay $400 (sandbox buyer, or **Simulate payment** labelled) | "Every reminder links to a private page for the client. Priya at Bluebird is short on cash. She can only choose plans Maya's rules allow, and she sees exactly what she's agreeing to. Accepting switches the PayPal invoice to partial payments, and she pays the first four hundred." |
+| 7 | 2:05–2:20 | Back to the dashboard: Bluebird moves to **Agreed**, "Plan 1 of 3 paid", **Collected after Unstuck acted: $400** | "The payment comes back, Unstuck verifies it, and the plan moves on. If an installment is missed, the invoice goes straight back into the loop." |
+| 8 | 2:20–2:38 | **Insights**: type "Which customers account for the highest overdue receivables?" → report + answer; then click **Missed promises** | "Maya can just ask. Our agent, built on AG Studio's Agent Framework, answers from her data with names and amounts, opens the report, and says so when it can't answer." |
+| 9 | 2:38–2:48 | Back to the loop; end card: Unstuck · github.com/Sidd927/PayPal-AI-Hackathon · PayPal Invoicing + Claude + AG Studio | "Unstuck doesn't just chase unpaid invoices. It understands why they're stuck, helps resolve them, and verifies what happens next." |
 
-## Checklists
+## Prep checklist
 
-- [ ] < 3:00 · captions · no real personal data · licensed or no music · end card with repo and demo URLs
-- [ ] YouTube: **Public**, title "Unstuck: AI receivables agent for PayPal Invoicing (PayPal AI Hackathon 2026)", description with repo link and "Built with PayPal Invoicing API + Claude + AG Grid/AG Studio"
+1. `npm run build && npm start` (or `npm run dev`); press **Reset demo** right before recording.
+2. Browser at 1440×900, 110% zoom; a second window at 390 px for the client page.
+3. Record each scene separately and cut the waits. Never speed up the footage of the agent run.
+4. For the sandbox version: run `npm run seed:sandbox` the same day, log the buyer in on the second window, and if the webhook is slow press **Sync** (the narration still holds).
+5. Upload to YouTube as **Public**, titled "Unstuck: AI receivables resolution for PayPal Invoicing (PayPal AI Hackathon 2026)", with the repo link in the description. Check the link in a private window.

@@ -61,3 +61,16 @@ _Final run after all fixes: lint ✅ · unit 40/40 ✅ · build ✅ · contract 
 | 18 | Model-written automatic reminders not content-checked | `ai-security.test.ts` (6) |
 | 19 | `PAYPAL_API_BASE` could point at production PayPal | `reliability.test.ts` (3) |
 | 20 | Insights LLM proxy would 413 on Studio's normal payloads | `insights.test.ts` |
+
+## Final competition pass (2026-11-04, final code)
+
+| Gate | Result |
+|---|---|
+| `npm run lint` (tsc strict) | ✅ |
+| `npm test` | ✅ 100/100 (adds: resolution loop + missed-promise follow-through; 15 Insights phrasings) |
+| `npm run build` | ✅ |
+| `npm run test:contract` | ✅ 25/25, 104 PayPal API calls (scenario now 13 invoices) |
+| `npm run test:e2e` on the production build | ✅ 22/22 (adds: loop shows the missed promise; Bluebird moves to Agreed after the plan) |
+| `npm audit` | ✅ 0 vulnerabilities |
+| Widths 390 / 768 / 1440 | No horizontal overflow (console, payer page, activity) |
+| Real PayPal sandbox / real Claude | ⏳ still blocked (host unreachable; no credentials or key) |

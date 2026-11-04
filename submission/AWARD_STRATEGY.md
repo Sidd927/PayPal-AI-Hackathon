@@ -1,40 +1,44 @@
 # Award Strategy and Demo Story
 
-_Phase 3, 2026-11-04. Based on `research/PHASE_3_COMPETITOR_RECHECK.md`._
+_Final pass, 2026-11-04. Prize structure from the official rules, as quoted in the owner's brief (Devpost itself can't be reached from the build environment, so re-check it once before submitting): a project can win **one Grand Prize or one Honorable Mention, plus one Sponsor Prize**. All five criteria are weighted equally._
 
-## Where Unstuck can win
+## Targets
 
-| Prize | Fit | What decides it | Status |
-|---|---|---|---|
-| **AG Grid sponsor prize** (primary) | Strong | AG Grid on the core workflow (board, activity), plus AG Studio Insights with **our own agent built on the Studio Agent Framework**. At least two rivals also use Studio: one has a custom widget and hosted demo, one has built-in agents on Claude | Integration done and e2e-verified. **Needs the trial licence key** (watermark) and ideally a hosted URL |
-| Grand prize / honourable mention | Possible, not likely without evidence | Judges compare against entries that show real sandbox invoice ids and hosted demos | **Blocked on the owner's sandbox run and deployment** |
-| Render sponsor prize | Alternative only (one sponsor prize per project) | Deployed on Render | `render.yaml` ready |
+| Prize | Why Unstuck is credible | What it hinges on |
+|---|---|---|
+| **Grand Prize** (1st $12k, 2nd $8k, 3rd $5k) | A complete product rather than a proof of concept: the full resolution loop, two-sided (owner and client), with PayPal state changes and visible safety | Real sandbox evidence and a strong video. Rival entries already show sandbox ids and hosted demos |
+| **Best Use of PayPal + AI** ($5k, HM) | The AI decides *which* PayPal operation fits the cause (PUT reference, partial payments, conditional rules, record payment, cancel reminders), and code bounds it | Same evidence |
+| **Best Use of Agentic Commerce** ($5k, HM) | An agent negotiates payment terms with the client inside owner-set rules, and acceptance executes in PayPal | Show scene 6 clearly |
+| **Most Impactful** ($5k, HM) | A specific audience (small service businesses on PayPal Invoicing) and a measurable problem (late invoices) | Keep the stats sourced; don't overclaim recovery |
+| **Best Demo Delivery** ($5k, HM) | One story, one loop, visible state changes | The video. Use `VIDEO_SCRIPT.md` exactly; under 3:00 |
+| **Best Use of AG Grid** (sponsor: $5k / $2k / $1k) | AG Grid board and audit log, plus an AG Studio report and **our own Studio Agent Framework agent**, which answers 14 phrasings with grounded figures and declines the rest | The licence key (watermark) and a few seconds of Insights in the video |
 
-## The three things that move the needle, in order
+At most one honourable mention can be won; we don't pick which. Render, APIMatic, Bryntum and Channel3 are not targeted: adding them would distract from the main submission.
 
-1. **Real sandbox run, with evidence in the repo** (about 20 minutes): `npm run check:sandbox`, `npm run seed:sandbox`, walk the Bluebird plan with the sandbox buyer, and paste the invoice ids and debug ids into `qa/REAL_PAYPAL_SANDBOX_REPORT.md`. Without this, Unstuck's strongest claim, that remedies are executed as PayPal state, is supported only by a mock.
-2. **Hosted demo** on Render in simulation mode (open to judges), with the AG Studio trial key set.
-3. **Claude eval run** (`npm run eval` with a key) and publish the table as measured, whatever it shows.
+## Scored against the five criteria (honest)
 
-Feature work beyond this has lower return than any of the three.
+| Criterion | Strength | Gap |
+|---|---|---|
+| Technological implementation | Breadth of PayPal Invoicing operations, idempotency, verified webhooks, execution-time policy re-check; strict-mock contract test | **No real sandbox run yet**; no real Claude run yet |
+| Design | Coherent product: dashboard → loop → drawer → client page → Insights; responsive; honest labelling | AG Studio watermark until a key is set |
+| Potential impact | A real, specific problem; the loop maps to how invoices actually stall | No user validation beyond research |
+| Innovation | Diagnosis plus a cause-specific PayPal remedy plus a client-side resolution page plus missed-promise follow-through, shown as one loop | Several entries draft reminders or set up plans; ours is the combination, not a single feature |
+| Presentation | Script and shot list ready | Video not recorded |
 
-## Demo story (2:50)
+## The three actions that matter most (owner)
 
-One business and one week. The owner, Maya, is owed $20,050 across seven PayPal invoices. Six are late, each for a different reason.
+1. **Sandbox run** (about 20 minutes, `qa/REAL_PAYPAL_SANDBOX_REPORT.md`): it turns "mock-verified" into "PayPal-verified" for the technology criterion.
+2. **Record the video** (`VIDEO_SCRIPT.md`), ideally against the sandbox.
+3. **AG Studio trial key** for the sponsor prize, and a **Claude key** to publish a real evaluation (`npm run eval`).
 
-1. **Hook (0:00–0:30):** the sentence at the top of the console. "Every unpaid invoice has a reason."
-2. **The agent works (0:30–0:55):** Run the agent, and the trace shows it acting within the rules and asking about the rest.
-3. **Diagnosis → PayPal action (0:55–1:30):** Northwind's PO fix: quote, inference, one click, PayPal re-sends. Harbor's dispute: reminders paused, a suggested reply.
-4. **Resolution with the client (1:30–2:10):** Bluebird's page. The client asks for a plan, sees the consequences, accepts, PayPal switches to partial payments, and they pay $400 in the sandbox.
-5. **Follow-through (2:10–2:25):** a verified webhook. "Plan 1 of 3 paid. Collected after Unstuck acted: $400."
-6. **Ask Insights (2:25–2:38):** "Build a report for invoices requiring human approval", answered by our AG Studio agent.
-7. **Close (2:38–2:50):** "The agent proposes. Your rules decide. PayPal executes."
+## Demo story in one line
 
-**Rule:** no footage presented as real unless the header badges read "PayPal sandbox" and "Claude". If those runs can't happen, record in simulation and say so on screen.
+> Maya is owed $21,700 on eight PayPal invoices, each stuck for a different reason. Unstuck works out why, fixes what her rules allow inside PayPal, gets her client onto a plan she approved in advance, and catches the promise that quietly broke.
 
 ## What not to claim
 
 - That Unstuck is the only AI collections entry, or the only one with PayPal-native remedies.
 - Any Claude accuracy figure before the run.
 - Recovered revenue or causation: the figure is "collected after Unstuck acted".
-- That the risk score is predictive: it is a transparent heuristic.
+- That the risk score is predictive: it is a transparent score from named rules.
+- That anything was verified against the PayPal sandbox before the owner's run.

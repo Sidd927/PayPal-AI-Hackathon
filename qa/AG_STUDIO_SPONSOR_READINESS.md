@@ -17,17 +17,22 @@ _Phase 3, 2026-11-04. Package versions: `ag-studio` / `ag-studio-react` 3.0.0, `
 | Studio's five built-in agents (lead, planning, data, page, widget) running on Claude through a server-side `AgLlmAdapter` | `claudeAdapter` → `/api/insights/llm` | IMPLEMENTED, protocol-tested, **not verified with a real model** | `tests/insights.test.ts` checks message/tool-call translation with a fake client; no `ANTHROPIC_API_KEY` here |
 | Commercial licence key | `NEXT_PUBLIC_AG_GRID_LICENSE_KEY` → `AgStudioLicenseManager.setLicenseKey` | NOT SET | Trial watermark and console banner until the owner adds a key |
 
-### The seven questions from the directive (production build, simulation data)
+### Questions answered (production build, simulation data after one agent run)
 
-| Question | Report opened | Answer (abridged) |
+The router is deterministic and scored. A report matches only when all of its keyword groups match, and the report with the most matched groups wins. Answers are computed by `explain()` from the same read-only tables the report shows. Below are the answers as measured in the final pass. All 15 phrasings are covered by `tests/insights.test.ts`.
+
+| Question | Report opened | Answer (abridged, as measured) |
 |---|---|---|
-| Show overdue invoices by reason | Overdue invoices by reason | "6 overdue invoices, $14,950 in total. The biggest share is 'Missing info' at $4,800." |
-| Which customers have the largest outstanding balance? | Largest outstanding balances | "Fernwood Architects $5,500, Northwind Logistics $4,800, Atlas Robotics $3,900." |
-| Show promises due this week | Promises to pay | "No client has made a promise to pay yet…" (true for fresh demo data) |
-| Compare collected amounts before and after agent intervention | Collected with and without Unstuck | "No payments have been recorded yet…" before any payment; afterwards it splits by timing and says "timing, not proof that Unstuck caused the payment" |
-| Show invoices with the highest risk and no recent customer response | High risk with no recent reply | "4 invoice(s) are high risk or haven't heard from the client in 14+ days." |
-| Break down missed promises by customer | Promises to pay | Same view, with a Kept / Missed / Due status per customer |
-| Build a report for invoices requiring human approval | Waiting for your approval | "5 action(s) wait for you, 2 of them change money." |
+| Which customers account for the highest overdue receivables? | Overdue receivables by customer | "$16,200 is overdue across 7 customers. Highest: Northwind Logistics $4,800 (12 days late), Atlas Robotics $3,900, Harbor Dental $2,650 …" |
+| What are the most common reasons invoices are stuck? | Overdue invoices by reason | "7 overdue invoices, $16,200 in total, stuck for 6 different reasons. Most common: Forgot (2, $1,900) …" |
+| Which payment promises have been missed? | Promises to pay | "1 missed. Missed: Kestrel Media (by 2026-11-01). The agent follows these up on its next run." |
+| Which invoices need owner intervention today? | Waiting for your approval | "5 action(s) wait for you, 2 of them change money: Bluebird Café (Payment plan), Atlas Robotics (Record payment received) …" |
+| How much has been collected after Unstuck actions? | Collected with and without Unstuck | Before any payment: "No payments have been recorded yet…". After: split by timing, "not proof that Unstuck caused the payment" |
+| Which customers have not responded? | Customers who haven't responded | "No reply at all from Lumen Yoga on overdue invoices." |
+| Which invoices are at highest risk based on our actual risk rules? | Highest risk under your risk rules | "Harbor Dental 59 (High; biggest factor: 21 days past due), Quill Publishing 56 … 55+ is high and 28+ is watch. It's a transparent score, not a prediction." |
+| What worked? | What happened after each action | "4 actions have run. Paid in full since: 0. Part paid since: 0. No payment yet: 4. … not proof that the action caused it." |
+
+The previous seven phrasings (largest balances, promises due this week, before/after comparison, risky and silent, human approval) still route as before.
 
 ## Defect found and fixed in this pass
 

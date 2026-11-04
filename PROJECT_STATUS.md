@@ -1,6 +1,6 @@
 # Project Status
 
-_Updated 2026-11-04, end of Phase 3. Branches: `claude/busy-ride-kgtyzr` (working) and `main` (fast-forwarded to the verified Phase 3 head)._
+_Updated 2026-11-04, final competition pass. Branches: `claude/busy-ride-kgtyzr` (working) and `main` (fast-forwarded to the verified Phase 3 head)._
 
 Legend: NOT STARTED · IN PROGRESS · BLOCKED · COMPLETED · VERIFIED (with evidence)
 
@@ -17,7 +17,8 @@ Legend: NOT STARTED · IN PROGRESS · BLOCKED · COMPLETED · VERIFIED (with evi
 | AI evaluation, Claude | BLOCKED | Needs `ANTHROPIC_API_KEY` |
 | PayPal live code path | VERIFIED (mock) | `npm run test:contract` 25/25 |
 | PayPal real sandbox | BLOCKED | Network policy + credentials; plan in `qa/REAL_PAYPAL_SANDBOX_REPORT.md` |
-| Owner console, drawer, payer page, mobile | VERIFIED | e2e 20/20 (production build); no overflow at 390/768/1440 |
+| Owner console, drawer, payer page, mobile | VERIFIED | e2e 22/22 (production build); no overflow at 390/768/1440 |
+| Resolution loop (dashboard + drawer), missed-promise follow-through | VERIFIED | `tests/agent.test.ts` › resolution loop; e2e loop checks |
 | AG Grid board + AG Studio insights | VERIFIED | e2e; trial watermark until a key is set |
 | AG Studio Agent Framework (Unstuck Insights agent) | VERIFIED | e2e: page question, unsupported question, Studio AI panel; `qa/AG_STUDIO_SPONSOR_READINESS.md` |
 | AG Studio built-in agents on Claude | IMPLEMENTED (protocol-tested) | Needs `ANTHROPIC_API_KEY` |

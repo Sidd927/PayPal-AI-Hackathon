@@ -67,3 +67,16 @@
 - **Competitors rechecked:** at least eight hackathon entries. Two show real sandbox evidence and hosted demos (`research/PHASE_3_COMPETITOR_RECHECK.md`).
 - **Tests:** 90 unit, 25 contract, 20 e2e (production build), `npm audit` clean.
 - **Still blocked:** real sandbox (host unreachable, no credentials), real Claude (no key), hosting, AG licence key, video. All need the owner.
+
+## 2026-11-04: final competition pass
+
+- **Resolution loop as the centrepiece:** the dashboard places every open invoice in one stage (Spotted → Understood → Waiting for you → Acted → Agreed → Paid), computed server-side from recorded facts; the drawer shows a per-invoice stepper.
+- **Missed promises:** the demo includes one (Kestrel Media). The rules fallback treats it as a recorded fact, quotes the client's promise, labels the cause as an assumption, and follows up within policy.
+- **Insights:**
+  - a scored router covering 15 phrasings;
+  - new reports: overdue by customer, not responding, highest risk, and what happened after each action;
+  - answers name clients and amounts;
+  - the container is sized to each report.
+- **Submission:** README, Devpost and award strategy rewritten around the loop; the video shot list is ready.
+- **Gates:** 100 unit, 25 contract, 22 e2e on the production build.
+- **Still blocked:** sandbox and Claude (no network access or credentials here), AG licence, hosting, video. All are owner actions.
