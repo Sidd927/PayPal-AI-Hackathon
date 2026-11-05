@@ -20,7 +20,13 @@ export type CallReceipt = { operation: string; status: number; debugId?: string;
 export interface InvoiceGateway {
   readonly mode: "live" | "simulated";
   readonly environment: "sandbox" | "live" | "simulation";
+  /** Invoices the board syncs: sent/paid/etc. with full detail. Excludes DRAFTs (never sent to a client). */
   listInvoices(): Promise<{ invoices: PPInvoice[]; receipt: CallReceipt }>;
+  /**
+   * Every invoice in the account, ALL statuses including DRAFT, as PayPal's (abbreviated) list entries,
+   * across every page. Throws rather than return a partial list: callers use it to avoid duplicates.
+   */
+  listAllInvoices(): Promise<PPInvoice[]>;
   getInvoice(id: string): Promise<PPInvoice>;
   sendReminder(id: string, input: ReminderInput, requestId: string): Promise<CallReceipt>;
   /** Full replacement update (PayPal semantics). Use `buildInvoiceUpdateBody` to derive the body from a fetched invoice. */
@@ -77,6 +83,25 @@ export class LivePayPalGateway implements InvoiceGateway {
     const relevant = all.filter((inv) => inv.status !== "DRAFT").slice(0, 100);
     const full = await Promise.all(relevant.map((inv) => this.getInvoice(inv.id).catch(() => inv)));
     return { invoices: full, receipt };
+  }
+
+  async listAllInvoices() {
+    const PAGE_SIZE = 100;
+    const MAX_PAGES = 50;
+    const all: PPInvoice[] = [];
+    let totalItems: number | undefined;
+    for (let page = 1; ; page++) {
+      if (page > MAX_PAGES) throw new Error(`More than ${MAX_PAGES * PAGE_SIZE} invoices: refusing to work from an incomplete list.`);
+      const res = await this.client.request("GET", "/v2/invoicing/invoices", { query: { page, page_size: PAGE_SIZE, total_required: true } });
+      const parsed = PPInvoiceList.parse(res.data ?? {});
+      const items = parsed.items ?? [];
+      all.push(...items);
+      totalItems ??= parsed.total_items;
+      const last = parsed.total_pages !== undefined ? page >= parsed.total_pages : items.length < PAGE_SIZE;
+      if (last) break;
+    }
+    if (totalItems !== undefined && all.length < totalItems) throw new Error(`PayPal reported ${totalItems} invoices but only ${all.length} were listed: refusing to work from an incomplete list.`);
+    return all;
   }
 
   async getInvoice(id: string) {

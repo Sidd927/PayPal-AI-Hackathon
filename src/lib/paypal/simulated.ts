@@ -54,8 +54,14 @@ export class SimulatedGateway implements InvoiceGateway {
   readonly environment = "simulation" as const;
 
   async listInvoices() {
+    // Same contract as the live gateway: DRAFTs are not part of the board sync.
+    const all = await this.listAllInvoices();
+    return { invoices: all.filter((i) => i.status !== "DRAFT"), receipt: receipt("GET /v2/invoicing/invoices", 200) };
+  }
+
+  async listAllInvoices() {
     const rows = getDb().prepare("SELECT json FROM sim_invoices").all() as { json: string }[];
-    return { invoices: rows.map((r) => PPInvoice.parse(JSON.parse(r.json))), receipt: receipt("GET /v2/invoicing/invoices", 200) };
+    return rows.map((r) => PPInvoice.parse(JSON.parse(r.json)));
   }
 
   async getInvoice(id: string) {

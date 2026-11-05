@@ -197,7 +197,7 @@ export type SeedOutcome = {
 const PAID_STATUSES = new Set(["PAID", "MARKED_AS_PAID"]);
 /** Statuses that mean PayPal already sent the invoice to the recipient: never send again. */
 const SENT_STATUSES = new Set(["SENT", "UNPAID", "PARTIALLY_PAID", "PAID", "MARKED_AS_PAID", "SCHEDULED", "PAYMENT_PENDING"]);
-const NUMBER_RE = /^JC-(\d{4})(?:-[A-Z0-9]+)?$/;
+const NUMBER_RE = /^JC-(\d{4})(?:-[A-Z0-9]+)?$/i;
 
 const recipientEmailOf = (inv: PPInvoice) => inv.primary_recipients?.[0]?.billing_info?.email_address?.toLowerCase() ?? "";
 const totalMinorOf = (s: SeedInvoice) => s.items.reduce((a, i) => a + i.amount, 0);
@@ -278,13 +278,14 @@ export async function seedScenarioWithReport(
   const ids: Record<string, string> = {};
   const outcomes: SeedOutcome[] = [];
 
-  // 1. Discovery (read-only).
-  const { invoices } = await gw.listInvoices();
+  // 1. Discovery (read-only). Every status, every page: a missed DRAFT would become a duplicate. If the
+  //    listing or any detail fetch fails, the whole run stops before planning anything.
+  const listed = await gw.listAllInvoices();
   const byNumber = new Map<number, PPInvoice[]>();
-  for (const inv of invoices) {
-    const m = NUMBER_RE.exec(inv.detail?.invoice_number ?? "");
+  for (const inv of listed) {
+    const m = NUMBER_RE.exec((inv.detail?.invoice_number ?? "").trim());
     if (!m) continue;
-    const full = await gw.getInvoice(inv.id).catch(() => inv); // list entries (esp. drafts) are abbreviated
+    const full = await gw.getInvoice(inv.id); // list entries are abbreviated (recipient, amounts); no fallback
     byNumber.set(Number(m[1]), [...(byNumber.get(Number(m[1])) ?? []), full]);
   }
 
