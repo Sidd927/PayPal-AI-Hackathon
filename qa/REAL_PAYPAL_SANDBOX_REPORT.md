@@ -1,6 +1,50 @@
 # Real PayPal Sandbox Report
 
-**Status: NOT YET VERIFIED AGAINST THE REAL SANDBOX.** Nothing in this repository claims a real PayPal transaction has occurred.
+**Status: PARTIALLY RUN BY THE OWNER, SEEDING NOT COMPLETE.** The owner ran `npm run seed:sandbox` against their PayPal sandbox on 2026-11-05. It stopped after 7 invoices. The build environment still cannot reach PayPal, so everything below about the real sandbox is **as reported by the owner** from `npm run check:sandbox` output.
+
+## Owner's run, 2026-11-05 (reported)
+
+| Invoice number | Scenario | Status | PayPal id |
+|---|---|---|---|
+| JC-1012-JV1Q | lumen-h1 (history) | MARKED_AS_PAID | INV2-DLS5-XXY2-LR8F-7H8S |
+| JC-1021-JZWH | lumen-h2 (history) | MARKED_AS_PAID | INV2-PKL3-UTKV-B6WX-HCNL |
+| JC-1030-K3PS | lumen-h3 (history) | MARKED_AS_PAID | INV2-3CQ6-AU3Q-GQMA-RBVF |
+| JC-1027-K74I | northwind-h1 (history) | MARKED_AS_PAID | INV2-RSTZ-ZDQ8-NPMT-YEQZ |
+| JC-1025-KAGC | bluebird-h1 (history) | MARKED_AS_PAID | INV2-67DQ-YFU6-YKEQ-VFTP |
+| JC-1041-KECL | northwind | SENT | INV2-S9BV-FQEK-3KDP-CGK6 |
+| JC-1043-KH5S | bluebird | **DRAFT** | INV2-WGM3-AQMX-YL5E-ZC96 |
+
+What this demonstrates against the real sandbox (owner-run):
+- OAuth;
+- `POST /v2/invoicing/invoices` (create);
+- `POST …/send`;
+- `POST …/payments` (record payment, giving 5 × MARKED_AS_PAID);
+- `GET /v2/invoicing/invoices` (list).
+
+Six invoices were not created: harbor, lumen, atlas, quill, kestrel, fernwood.
+
+**Failure:** `POST …/send` for Bluebird returned `406 MEDIA_TYPE_NOT_ACCEPTABLE / INR_FOREIGN_CURRENCY_BLOCKED` ("cannot send invoices to customers within India").
+
+**Root cause:** Bluebird is the only scenario addressed to `DEMO_PAYER_EMAIL`, the owner's sandbox *Personal* account. Every other recipient is a fictional `.example` address. PayPal resolved that email to the sandbox account, whose registered country is India, and refused to send. Northwind, sent seconds earlier from the same business account, succeeded. Create had already succeeded, so the draft remained.
+
+The old seeder then aborted. Re-running it would have created a second copy of every invoice, because it never looked at what already existed.
+
+## Recovery procedure (seeder is now resumable)
+
+1. In the sandbox dashboard (Testing Tools → Sandbox Accounts → **Create account**), create a **Personal** account with **Country/Region** set to a country outside India, for example the United States. The country is fixed at creation; editing an existing account's email does not change it.
+2. Set `DEMO_PAYER_EMAIL` in `.env` to that account's generated email. Alternatively, leave it empty to address Bluebird to the fictional `priya@bluebirdcafe.example`; you then can't log in as that buyer.
+3. Run `npm run seed:sandbox -- --dry-run` (read-only: list and get only). The expected plan is:
+   - 5 history invoices: **skipped** (already paid);
+   - northwind: **skipped** (already sent; not resent);
+   - bluebird `INV2-WGM3-AQMX-YL5E-ZC96`: **planned** `update-recipient → send` (the existing draft is reused);
+   - harbor, lumen, atlas, quill, kestrel, fernwood: **planned** `create → send`;
+   - 0 failed.
+
+   If the plan differs (for example "2 invoices already exist"), stop and resolve that first.
+4. Run `npm run seed:sandbox`. Expect "6 created, 1 resumed, 6 already complete, 0 failed". If Bluebird fails again with `INR_FOREIGN_CURRENCY_BLOCKED`, the new buyer account is still India-registered. Nothing is duplicated: fix it and re-run.
+5. Run `npm run check:sandbox`, then `npm run seed:sandbox -- --dry-run` again. It should show **13 skipped**, which is the verification that seeding is complete. Record the new ids below.
+
+
 
 **Exact blockers (rechecked 2026-11-04, Phase 3):**
 
@@ -53,7 +97,7 @@ Then walk rows 7–17 in the browser and paste the debug ids into the last table
 
 ## Sandbox requirements
 
-- A PayPal developer account, with a sandbox **business** account (the invoicer) and a sandbox **personal** account (the payer). Both are created by default under Testing Tools → Sandbox Accounts.
+- A PayPal developer account, with a sandbox **business** account (the invoicer) and, optionally, a sandbox **personal** account (the payer). Default sandbox accounts take the developer account's country; if that is India, create a separate Personal account in another country for `DEMO_PAYER_EMAIL` (see the recovery procedure).
 - A REST app (Apps & Credentials → Sandbox) → `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET`.
 - `OWNER_BASIC_AUTH` when running `next start` with real credentials: the owner console fails closed (503) without it.
 - For webhooks: a public https URL (Render, or a tunnel such as `cloudflared tunnel --url http://localhost:3000`), then `npm run check:sandbox -- --register-webhook` → `PAYPAL_WEBHOOK_ID`.

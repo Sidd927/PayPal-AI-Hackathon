@@ -39,14 +39,18 @@ Open <http://localhost:3000>. The demo studio loads automatically, and the heade
    cp .env.example .env.local
    ```
 
-   Then set `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `DEMO_PAYER_EMAIL` and `ANTHROPIC_API_KEY`.
+   Then set `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `ANTHROPIC_API_KEY` and, optionally, `DEMO_PAYER_EMAIL`. That must be a sandbox Personal account registered outside India: PayPal refuses to send invoices to India-based recipients.
 3. Check the connection:
 
    ```bash
    npm run check:sandbox
    ```
 
-4. Create the demo invoices in your sandbox:
+4. Create the demo invoices in your sandbox. Check first with the read-only dry run; the seeder is resumable and safe to re-run:
+
+   ```bash
+   npm run seed:sandbox -- --dry-run
+   ```
 
    ```bash
    npm run seed:sandbox

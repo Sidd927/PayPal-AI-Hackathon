@@ -29,7 +29,7 @@ async function main() {
 
   const list = await client.request<{ total_items?: number; items?: { id: string; status: string; detail?: { invoice_number?: string } }[] }>("GET", "/v2/invoicing/invoices", { query: { page: 1, page_size: 20, total_required: true } });
   console.log(`✓ Invoicing API reachable: ${list.data.total_items ?? list.data.items?.length ?? 0} invoices (debug id ${list.debugId})`);
-  for (const i of list.data.items?.slice(0, 10) ?? []) console.log(`    ${i.detail?.invoice_number ?? "—"}  ${i.status}  ${i.id}`);
+  for (const i of list.data.items ?? []) console.log(`    ${i.detail?.invoice_number ?? "—"}  ${i.status}  ${i.id}`);
 
   const hooks = await client.request<{ webhooks?: { id: string; url: string; event_types: { name: string }[] }[] }>("GET", "/v1/notifications/webhooks");
   const ours = hooks.data.webhooks?.filter((w) => w.url.endsWith("/api/webhooks/paypal")) ?? [];

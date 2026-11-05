@@ -109,10 +109,25 @@ export class SimulatedGateway implements InvoiceGateway {
   }
 
   async createAndSendInvoice(input: CreateInvoiceInput, requestId: string) {
+    const { id } = await this.createDraftInvoice(input, requestId);
+    await this.sendInvoice(id, requestId);
+    return { id, receipt: receipt("POST /v2/invoicing/invoices + /send", 202, requestId) };
+  }
+
+  async sendInvoice(id: string, requestId: string) {
+    const inv = load(id);
+    if (inv.status !== "DRAFT") throw Object.assign(new Error(`INVALID_INVOICE_STATUS: only a DRAFT can be sent (status ${inv.status})`), { status: 422 });
+    inv.status = "SENT";
+    recompute(inv);
+    save(inv);
+    return receipt("POST /v2/invoicing/invoices/{id}/send", 202, requestId);
+  }
+
+  async createDraftInvoice(input: CreateInvoiceInput, requestId: string) {
     const id = `SIM2-${Math.random().toString(36).slice(2, 6).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
     const inv: SimInvoice = {
       id,
-      status: "SENT",
+      status: "DRAFT",
       detail: {
         invoice_number: input.invoice_number,
         reference: input.reference,
@@ -138,7 +153,7 @@ export class SimulatedGateway implements InvoiceGateway {
     };
     recompute(inv);
     save(inv);
-    return { id, receipt: receipt("POST /v2/invoicing/invoices + /send", 202, requestId) };
+    return { id, receipt: receipt("POST /v2/invoicing/invoices", 201, requestId) };
   }
 
   async verifyWebhook() {

@@ -29,6 +29,10 @@ export interface InvoiceGateway {
   recordPayment(id: string, input: RecordPaymentInput, requestId: string): Promise<CallReceipt>;
   cancelAutoReminders(id: string, requestId: string): Promise<CallReceipt>;
   createAndSendInvoice(input: CreateInvoiceInput, requestId: string): Promise<{ id: string; receipt: CallReceipt }>;
+  /** Create a DRAFT only. Separate from sending so a failed send never leads to a second create. */
+  createDraftInvoice(input: CreateInvoiceInput, requestId: string): Promise<{ id: string; receipt: CallReceipt }>;
+  /** Send an existing DRAFT to its recipient. */
+  sendInvoice(id: string, requestId: string): Promise<CallReceipt>;
   verifyWebhook(headers: Headers, rawBody: string): Promise<boolean>;
 }
 
@@ -120,8 +124,14 @@ export class LivePayPalGateway implements InvoiceGateway {
   }
 
   async createAndSendInvoice(input: CreateInvoiceInput, requestId: string) {
+    const { id } = await this.createDraftInvoice(input, `${requestId}-create`);
+    const receipt = await this.sendInvoice(id, `${requestId}-send`);
+    return { id, receipt: { ...receipt, operation: "POST /v2/invoicing/invoices + /send", requestId } };
+  }
+
+  async createDraftInvoice(input: CreateInvoiceInput, requestId: string) {
     const draft = await this.client.request<{ id?: string; href?: string; links?: { href: string; rel: string }[] }>("POST", "/v2/invoicing/invoices", {
-      requestId: `${requestId}-create`,
+      requestId,
       headers: { Prefer: "return=representation" },
       body: {
         detail: {
@@ -148,11 +158,15 @@ export class LivePayPalGateway implements InvoiceGateway {
     });
     const id = draft.data?.id ?? draft.data?.href?.split("/").pop() ?? draft.data?.links?.find((l) => l.rel === "self")?.href.split("/").pop();
     if (!id) throw new Error("PayPal did not return an invoice id");
+    return { id, receipt: { operation: "POST /v2/invoicing/invoices", status: draft.status, debugId: draft.debugId, requestId } };
+  }
+
+  async sendInvoice(id: string, requestId: string) {
     const sent = await this.client.request("POST", `/v2/invoicing/invoices/${encodeURIComponent(id)}/send`, {
-      requestId: `${requestId}-send`,
+      requestId,
       body: { send_to_recipient: true, send_to_invoicer: false },
     });
-    return { id, receipt: { operation: "POST /v2/invoicing/invoices + /send", status: sent.status, debugId: sent.debugId, requestId } };
+    return { operation: "POST /v2/invoicing/invoices/{id}/send", status: sent.status, debugId: sent.debugId, requestId };
   }
 
   /** Verify a webhook with PayPal's verify-webhook-signature API. Requires PAYPAL_WEBHOOK_ID. */

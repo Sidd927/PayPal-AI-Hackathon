@@ -107,15 +107,21 @@ To connect the PayPal sandbox and Claude:
 cp .env.example .env.local
 ```
 
-Set `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `DEMO_PAYER_EMAIL` and `ANTHROPIC_API_KEY`, then:
+Set `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` and `ANTHROPIC_API_KEY`. Optionally set `DEMO_PAYER_EMAIL` to a sandbox **Personal account registered outside India**: PayPal won't send invoices to India-based recipients. Then:
 
 ```bash
 npm run check:sandbox
 ```
 
 ```bash
+npm run seed:sandbox -- --dry-run
+```
+
+```bash
 npm run seed:sandbox
 ```
+
+The seeder is resumable. It reuses invoices already in PayPal, never resends or duplicates them, and reports each scenario as created, resumed, skipped or failed. Re-run it after fixing any failure.
 
 ```bash
 npm run dev

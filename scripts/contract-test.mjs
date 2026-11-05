@@ -186,6 +186,17 @@ try {
   if (code !== 0) console.log(seedOut);
   check("seeding used idempotency keys", calls.filter((c) => c.method === "POST" && c.path.startsWith("/v2/")).every((c) => !!c.requestId));
 
+  // Re-running the seeder must resume, not duplicate: discovery only, zero writes.
+  const writesBefore = calls.filter((c) => c.method !== "GET" && c.path.startsWith("/v2/")).length;
+  const reseed = spawn("npx", ["tsx", "scripts/seed-sandbox.ts"], { env, stdio: ["ignore", "pipe", "pipe"] });
+  let reseedOut = "";
+  reseed.stdout.on("data", (d) => (reseedOut += d));
+  reseed.stderr.on("data", (d) => (reseedOut += d));
+  const code2 = await new Promise((r) => reseed.on("close", r));
+  const writesAfter = calls.filter((c) => c.method !== "GET" && c.path.startsWith("/v2/")).length;
+  check("re-running seed-sandbox is a no-op (no duplicates, nothing resent)", code2 === 0 && invoices.size === 13 && writesAfter === writesBefore && /0 created, 0 resumed, 13 already complete, 0 failed/.test(reseedOut), `${invoices.size} invoices, ${writesAfter - writesBefore} new writes, exit ${code2}`);
+  if (code2 !== 0) console.log(reseedOut);
+
   const portBusy = await fetch(`${APP}/api/health`).then(() => true, () => false);
   if (portBusy) throw new Error(`Port ${APP_PORT} is already in use — stop the other server first`);
   // Own process group so the Next.js server (a grandchild) is killed with it.

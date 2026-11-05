@@ -7,13 +7,15 @@
  * seeded into Unstuck's own store (as if forwarded from email); invoices are created through the
  * InvoiceGateway — i.e. as real PayPal sandbox invoices when credentials are configured.
  */
+import { createHash } from "node:crypto";
 import { addDays, formatDate, todayIso } from "../dates";
 import { repo } from "../db";
-import type { InvoiceGateway } from "../paypal/gateway";
-import { fromMinor } from "../money";
+import { buildInvoiceUpdateBody, type InvoiceGateway } from "../paypal/gateway";
+import type { PPInvoice } from "../paypal/types";
+import { fromMinor, toMinor } from "../money";
 import { PayPalApiError } from "../paypal/client";
 
-type SeedInvoice = {
+export type SeedInvoice = {
   key: string;
   number: number;
   recipient: { business: string; given: string; surname: string; email: string };
@@ -149,53 +151,226 @@ function numberFor(n: number, live: boolean) {
   return live ? `JC-${n}-${Date.now().toString(36).slice(-4).toUpperCase()}` : `JC-${n}`;
 }
 
-async function createWithDateFallback(gw: InvoiceGateway, s: SeedInvoice, payerEmail: string, log: (m: string) => void) {
+/** The email an invoice for this scenario should be addressed to. */
+export function desiredRecipientEmail(s: SeedInvoice, payerEmail: string | undefined) {
+  return s.usePayerEmail && payerEmail ? payerEmail : s.recipient.email;
+}
+
+/** Create a DRAFT only. The back-dating fallback applies to the create call alone: no draft exists yet when it fails. */
+async function createDraftWithDateFallback(gw: InvoiceGateway, s: SeedInvoice, recipientEmail: string, runId: string, log: (m: string) => void) {
   const today = todayIso();
-  const live = gw.mode === "live";
   const base = {
-    invoice_number: numberFor(s.number, live),
+    invoice_number: numberFor(s.number, gw.mode === "live"),
     currency_code: "USD",
     note: `Thank you for working with ${BUSINESS.name}.`,
     invoicer: { business_name: BUSINESS.name },
-    recipient: { business_name: s.recipient.business, given_name: s.recipient.given, surname: s.recipient.surname, email_address: s.usePayerEmail && payerEmail ? payerEmail : s.recipient.email },
+    recipient: { business_name: s.recipient.business, given_name: s.recipient.given, surname: s.recipient.surname, email_address: recipientEmail },
     items: s.items.map((i) => ({ name: i.name, quantity: "1", unit_amount: { currency_code: "USD", value: fromMinor(i.amount) } })),
   };
   try {
-    return await gw.createAndSendInvoice({ ...base, invoice_date: addDays(today, -s.issuedDaysAgo), due_date: addDays(today, s.dueInDays) }, `seed-${s.key}-${Date.now()}`);
+    return await gw.createDraftInvoice({ ...base, invoice_date: addDays(today, -s.issuedDaysAgo), due_date: addDays(today, s.dueInDays) }, `seed-${s.key}-${runId}`);
   } catch (e) {
-    if (!(e instanceof PayPalApiError) || e.status !== 422 && e.status !== 400) throw e;
+    if (!(e instanceof PayPalApiError) || (e.status !== 422 && e.status !== 400)) throw e;
     // PayPal may reject back-dated invoices; fall back to today's date so the demo still runs on real sandbox data.
     log(`  ↳ PayPal rejected back-dated ${s.key} (${e.message}); creating with today's date`);
-    return await gw.createAndSendInvoice({ ...base, invoice_date: today, due_date: addDays(today, Math.max(0, s.dueInDays)) }, `seed-${s.key}-${Date.now()}-b`);
+    return await gw.createDraftInvoice({ ...base, invoice_date: today, due_date: addDays(today, Math.max(0, s.dueInDays)) }, `seed-${s.key}-${runId}-b`);
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Resumable seeding                                                   */
+/* ------------------------------------------------------------------ */
+
+export type SeedStep = "create" | "update-recipient" | "send" | "record-payment";
+export type SeedPlan = { invoiceId?: string; status?: string; steps: SeedStep[]; reason: string; fail?: boolean };
+export type SeedOutcome = {
+  key: string;
+  number: number;
+  kind: "history" | "active";
+  result: "created" | "resumed" | "skipped" | "failed" | "planned";
+  invoiceId?: string;
+  status?: string;
+  steps: SeedStep[];
+  detail: string;
+};
+
+const PAID_STATUSES = new Set(["PAID", "MARKED_AS_PAID"]);
+/** Statuses that mean PayPal already sent the invoice to the recipient: never send again. */
+const SENT_STATUSES = new Set(["SENT", "UNPAID", "PARTIALLY_PAID", "PAID", "MARKED_AS_PAID", "SCHEDULED", "PAYMENT_PENDING"]);
+const NUMBER_RE = /^JC-(\d{4})(?:-[A-Z0-9]+)?$/;
+
+const recipientEmailOf = (inv: PPInvoice) => inv.primary_recipients?.[0]?.billing_info?.email_address?.toLowerCase() ?? "";
+const totalMinorOf = (s: SeedInvoice) => s.items.reduce((a, i) => a + i.amount, 0);
+const paidMinorOf = (inv: PPInvoice) => toMinor(inv.payments?.paid_amount?.value ?? "0");
+const invoiceTotalMinor = (inv: PPInvoice) => (inv.amount?.value ? toMinor(inv.amount.value) : null);
+
 /**
- * Seed the scenario through a gateway. Returns created invoice ids keyed by scenario key.
- * `storeLocally` must persist an invoice row (services/invoices.storeInvoice) — injected to avoid import cycles.
+ * Recording a payment is only ever done for the fictional paid-history invoices, on an invoice that is
+ * addressed to the scenario's own `.example` address, has nothing paid yet, and has the expected total.
+ * Anything else (a real address, a partial payment, a different amount) is refused.
+ */
+export function canRecordSeedPayment(s: SeedInvoice, inv: PPInvoice): string | null {
+  if (!s.paid) return "Only paid-history scenarios record payments.";
+  if (!/\.example$/i.test(s.recipient.email)) return "Refusing: the scenario recipient is not a fictional .example address.";
+  if (recipientEmailOf(inv) !== s.recipient.email.toLowerCase()) return `Refusing: invoice is addressed to ${recipientEmailOf(inv) || "an unknown recipient"}, not ${s.recipient.email}.`;
+  if (!["SENT", "UNPAID"].includes(inv.status)) return `Refusing: invoice status is ${inv.status}.`;
+  if (paidMinorOf(inv) !== 0) return "Refusing: the invoice already has a payment recorded.";
+  const total = invoiceTotalMinor(inv);
+  if (total !== null && total !== totalMinorOf(s)) return `Refusing: invoice total ${fromMinor(total)} differs from the scenario's ${fromMinor(totalMinorOf(s))}.`;
+  return null;
+}
+
+/**
+ * Decide what to do for one scenario, given the invoices already in PayPal with its number (full details).
+ * Pure: no I/O. Never plans to send an invoice that is not a DRAFT, and never plans a second create.
+ */
+export function planSeed(s: SeedInvoice, matches: PPInvoice[], payerEmail: string | undefined): SeedPlan {
+  const history = !!s.paid;
+  const want = desiredRecipientEmail(s, payerEmail).toLowerCase();
+  const usable = matches.filter((m) => m.status !== "CANCELLED");
+  if (usable.length > 1) {
+    return { steps: [], fail: true, reason: `${usable.length} invoices already exist for JC-${s.number} (${usable.map((m) => `${m.id} ${m.status}`).join(", ")}). Resolve the duplicates in the sandbox dashboard; nothing was changed.` };
+  }
+  if (usable.length === 0) {
+    if (matches.length) return { steps: [], fail: true, reason: `Only cancelled invoice(s) exist for JC-${s.number} (${matches.map((m) => m.id).join(", ")}). Not replacing them automatically; nothing was changed.` };
+    return { steps: history ? ["create", "send", "record-payment"] : ["create", "send"], reason: "No invoice yet" };
+  }
+  const inv = usable[0]!;
+  const base = { invoiceId: inv.id, status: inv.status };
+  if (inv.status === "DRAFT") {
+    const fix: SeedStep[] = recipientEmailOf(inv) !== want ? ["update-recipient"] : [];
+    return { ...base, steps: [...fix, "send", ...(history ? (["record-payment"] as SeedStep[]) : [])], reason: fix.length ? `Draft is addressed to ${recipientEmailOf(inv) || "nobody"}; will readdress it to ${want} and send` : "Draft exists; will send it" };
+  }
+  if (history) {
+    if (PAID_STATUSES.has(inv.status)) return { ...base, steps: [], reason: "Already paid" };
+    const refusal = canRecordSeedPayment(s, inv);
+    if (refusal) return { ...base, steps: [], fail: true, reason: refusal };
+    return { ...base, steps: ["record-payment"], reason: "Sent but the history payment was never recorded" };
+  }
+  if (SENT_STATUSES.has(inv.status)) {
+    const note = recipientEmailOf(inv) && recipientEmailOf(inv) !== want ? ` (addressed to ${recipientEmailOf(inv)}; not changed, because it was already sent)` : "";
+    return { ...base, steps: [], reason: `Already sent (${inv.status}); not resent${note}` };
+  }
+  return { ...base, steps: [], fail: true, reason: `Unexpected status ${inv.status}; left for you to review.` };
+}
+
+/** Explain PayPal errors the seeder is known to hit. */
+function hintFor(err: unknown): string {
+  const text = `${(err as Error).message ?? ""} ${JSON.stringify((err as PayPalApiError).details ?? "")}`;
+  if (/INR_FOREIGN_CURRENCY_BLOCKED/.test(text)) {
+    return " PayPal won't send invoices to a recipient whose PayPal account is registered in India. Set DEMO_PAYER_EMAIL to a sandbox Personal account created with a country outside India (Sandbox Accounts → Create account), or leave it empty to use the fictional address, then re-run.";
+  }
+  return "";
+}
+
+/**
+ * Seed the scenario, resuming from whatever already exists in PayPal. Discovery is read-only (list + get);
+ * each write uses an idempotency key derived from the invoice id, and every write is preceded by a fresh
+ * read of the invoice's status. One scenario failing does not stop the others.
+ */
+export async function seedScenarioWithReport(
+  gw: InvoiceGateway,
+  opts: { payerEmail?: string; log?: (m: string) => void; refresh: (id: string) => Promise<unknown>; dryRun?: boolean },
+) {
+  const log = opts.log ?? (() => {});
+  const today = todayIso();
+  const runId = Date.now().toString(36);
+  const ids: Record<string, string> = {};
+  const outcomes: SeedOutcome[] = [];
+
+  // 1. Discovery (read-only).
+  const { invoices } = await gw.listInvoices();
+  const byNumber = new Map<number, PPInvoice[]>();
+  for (const inv of invoices) {
+    const m = NUMBER_RE.exec(inv.detail?.invoice_number ?? "");
+    if (!m) continue;
+    const full = await gw.getInvoice(inv.id).catch(() => inv); // list entries (esp. drafts) are abbreviated
+    byNumber.set(Number(m[1]), [...(byNumber.get(Number(m[1])) ?? []), full]);
+  }
+
+  // 2. Plan and execute, scenario by scenario.
+  for (const s of [...HISTORY, ...SCENARIO]) {
+    const kind = s.paid ? "history" : "active";
+    const plan = planSeed(s, byNumber.get(s.number) ?? [], opts.payerEmail);
+    const out: SeedOutcome = { key: s.key, number: s.number, kind, result: "skipped", invoiceId: plan.invoiceId, status: plan.status, steps: plan.steps, detail: plan.reason };
+    outcomes.push(out);
+    if (plan.fail) {
+      out.result = "failed";
+      log(`  ✗ ${s.key} (JC-${s.number}): ${plan.reason}`);
+      continue;
+    }
+    if (opts.dryRun) {
+      out.result = plan.steps.length ? "planned" : "skipped";
+      if (plan.invoiceId) ids[s.key] = plan.invoiceId;
+      log(`  ${plan.steps.length ? "→" : "="} ${s.key} (JC-${s.number}) ${plan.invoiceId ?? "new"}: ${plan.steps.length ? plan.steps.join(" → ") : "nothing to do"} (${plan.reason})`);
+      continue;
+    }
+    let id = plan.invoiceId;
+    const done: SeedStep[] = [];
+    try {
+      for (const step of plan.steps) {
+        if (step === "create") {
+          id = (await createDraftWithDateFallback(gw, s, desiredRecipientEmail(s, opts.payerEmail), runId, log)).id;
+          out.invoiceId = id;
+        } else if (step === "update-recipient") {
+          const inv = await gw.getInvoice(id!);
+          if (inv.status !== "DRAFT") throw new Error(`Invoice ${id} is ${inv.status}, no longer a draft; not readdressing it.`);
+          const email = desiredRecipientEmail(s, opts.payerEmail);
+          const body = buildInvoiceUpdateBody(inv, (b) => {
+            b.primary_recipients = [{ ...(b.primary_recipients?.[0] ?? {}), billing_info: { ...(b.primary_recipients?.[0]?.billing_info ?? {}), email_address: email } }];
+          });
+          await gw.updateInvoice(id!, body, { requestId: `seed-recipient-${id}-${createHash("sha256").update(email.toLowerCase()).digest("hex").slice(0, 12)}`, sendToRecipient: false });
+        } else if (step === "send") {
+          const inv = await gw.getInvoice(id!);
+          if (inv.status !== "DRAFT") throw new Error(`Invoice ${id} is already ${inv.status}; not sending it again.`);
+          await gw.sendInvoice(id!, `seed-send-${id}`);
+        } else if (step === "record-payment") {
+          const inv = await gw.getInvoice(id!);
+          const refusal = canRecordSeedPayment(s, inv);
+          if (refusal) throw new Error(refusal);
+          const paidOn = addDays(today, s.dueInDays + s.paid!.daysAfterDue);
+          await gw.recordPayment(id!, { method: s.paid!.method, payment_date: paidOn, amount: { currency_code: "USD", value: fromMinor(totalMinorOf(s)) }, note: "Seeded history (sandbox demo)" }, `seed-pay-${id}`);
+        }
+        done.push(step);
+      }
+      out.result = plan.steps.includes("create") ? "created" : plan.steps.length ? "resumed" : "skipped";
+      ids[s.key] = id!;
+      await opts.refresh(id!);
+      out.status = (await gw.getInvoice(id!).catch(() => null))?.status ?? out.status;
+      log(`  ${out.result === "skipped" ? "=" : "✓"} ${s.key} (JC-${s.number}) ${id}: ${out.result}${done.length ? ` [${done.join(" → ")}]` : ""}, ${out.status ?? ""} (${plan.reason})`);
+    } catch (e) {
+      out.result = "failed";
+      out.invoiceId = id;
+      const err = e as PayPalApiError;
+      out.detail = `${done.length ? `completed [${done.join(" → ")}] then ` : ""}failed: ${err.message}${err.debugId ? ` (PayPal debug id ${err.debugId})` : ""}.${hintFor(e)}`;
+      if (id) ids[s.key] = id; // a draft that exists is reused on the next run
+      log(`  ✗ ${s.key} (JC-${s.number}) ${id ?? ""}: ${out.detail}`);
+    }
+  }
+
+  // 3. Unstuck's own store: conversations for scenarios that reached PayPal, once.
+  if (!opts.dryRun) {
+    for (const s of SCENARIO) {
+      const id = ids[s.key];
+      const o = outcomes.find((x) => x.key === s.key);
+      if (!id || o?.result === "failed") continue;
+      if (repo.listMessages(id).length > 0 || repo.listEvents({ invoiceId: id, limit: 1000 }).some((e) => e.kind === "reminder_sent" || e.kind === "promise_to_pay")) continue;
+      seedConversation(id, s, today);
+    }
+    repo.setSetting("demo_seeded_at", new Date().toISOString());
+    repo.setPolicy({ ...repo.getPolicy(), businessName: BUSINESS.name, ownerName: BUSINESS.owner });
+  }
+  return { ids, outcomes };
+}
+
+/**
+ * Seed the scenario through a gateway (simulation demo reset and tests). Returns invoice ids keyed by scenario
+ * key. Throws if any scenario failed, so a broken demo never looks complete.
  */
 export async function seedScenario(gw: InvoiceGateway, opts: { payerEmail?: string; log?: (m: string) => void; refresh: (id: string) => Promise<unknown> }) {
-  const log = opts.log ?? (() => {});
-  const ids: Record<string, string> = {};
-  const today = todayIso();
-  for (const s of [...HISTORY, ...SCENARIO]) {
-    const { id } = await createWithDateFallback(gw, s, opts.payerEmail ?? "", log);
-    ids[s.key] = id;
-    if (s.paid) {
-      const paidOn = addDays(today, s.dueInDays + s.paid.daysAfterDue);
-      const amount = s.items.reduce((a, i) => a + i.amount, 0);
-      await gw.recordPayment(id, { method: s.paid.method, payment_date: paidOn, amount: { currency_code: "USD", value: fromMinor(amount) }, note: "Seeded history" }, `seed-pay-${s.key}-${Date.now()}`);
-    }
-    await opts.refresh(id);
-    log(`  ✓ ${s.key} → ${id}`);
-  }
-  // Conversation and prior reminder history (Unstuck's own store).
-  for (const s of SCENARIO) {
-    const id = ids[s.key]!;
-    seedConversation(id, s, today);
-  }
-  repo.setSetting("demo_seeded_at", new Date().toISOString());
-  repo.setPolicy({ ...repo.getPolicy(), businessName: BUSINESS.name, ownerName: BUSINESS.owner });
+  const { ids, outcomes } = await seedScenarioWithReport(gw, opts);
+  const failed = outcomes.filter((o) => o.result === "failed");
+  if (failed.length) throw new Error(`Seeding failed for ${failed.map((o) => `${o.key}: ${o.detail}`).join("; ")}`);
   return ids;
 }
 

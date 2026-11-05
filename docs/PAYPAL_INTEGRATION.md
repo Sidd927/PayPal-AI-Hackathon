@@ -47,9 +47,16 @@ stateDiagram-v2
 ## Sandbox setup
 
 1. Create a REST app at <https://developer.paypal.com/dashboard/applications/sandbox>. Copy the **Client ID** and **Secret** into `.env.local`.
-2. Note the email of your **sandbox personal (buyer)** account (Testing Tools → Sandbox Accounts) and set `DEMO_PAYER_EMAIL`.
+2. *(Optional, to pay as the buyer.)* Create a sandbox **Personal** account registered **outside India** (Testing Tools → Sandbox Accounts → Create account; choose Personal and a Country/Region such as United States). Set `DEMO_PAYER_EMAIL` to its generated email. The country is fixed when the account is created; editing the email does not change it. PayPal refuses to send invoices to India-based recipients (`406 INR_FOREIGN_CURRENCY_BLOCKED`).
 3. `npm run check:sandbox` confirms OAuth and the Invoicing API.
-4. `npm run seed:sandbox` creates the demo studio's 12 invoices in your sandbox business account (5 paid history, 7 open). Bluebird Café's invoice goes to your buyer account.
+4. `npm run seed:sandbox -- --dry-run` (read-only) shows which demo invoices already exist and what a real run would do. Then `npm run seed:sandbox` creates the demo studio's 13 invoices in your sandbox business account (5 paid history, 8 open). Bluebird Café's invoice goes to `DEMO_PAYER_EMAIL` if set.
+
+   **The seeder is resumable.** It matches invoices already in PayPal by number (`JC-<n>-…`) and reuses them:
+   - drafts are readdressed if needed, then sent;
+   - anything already sent or paid is left alone and never resent;
+   - the five fictional history invoices get their sandbox "marked as paid" payment only if they have none yet, are addressed to their own `.example` address, and have the expected total.
+
+   Each scenario is reported as created, resumed, skipped or failed. A failure stops neither the others nor the next run. Duplicates or cancelled invoices for a number are reported and left for you to resolve.
 5. For webhooks, expose the app over https (Render URL or a tunnel), set `APP_BASE_URL`, run `npm run check:sandbox -- --register-webhook`, and put the printed id into `PAYPAL_WEBHOOK_ID`. Without a webhook, use **Sync with PayPal** after paying.
 6. In the payer page, **Pay with PayPal** opens PayPal's sandbox invoice page. Log in as the buyer and pay the first installment.
 
@@ -58,6 +65,6 @@ stateDiagram-v2
 | Item | Status |
 |---|---|
 | Request shapes for all operations | Verified against PayPal Agent Toolkit 1.11.0 source |
-| Full stack against a strict mock PayPal (23 checks, 84 HTTP calls) | **Verified** (`npm run test:contract`) |
-| Live sandbox run | **Pending.** This build environment's network policy blocks `api-m.sandbox.paypal.com`; run `npm run check:sandbox && npm run seed:sandbox` locally or on Render |
+| Full stack against a strict mock PayPal, including a no-op seeder re-run (26 checks) | **Verified** (`npm run test:contract`) |
+| Live sandbox run | **Partial, run by the owner (2026-11-05):** OAuth, create, send and record payment succeeded for 7 invoices, then `/send` for Bluebird returned `406 INR_FOREIGN_CURRENCY_BLOCKED` (buyer account registered in India). See `qa/REAL_PAYPAL_SANDBOX_REPORT.md` for the ids and the recovery procedure. Seeding is **not yet complete** |
 | Back-dated `invoice_date` / past `due_date` on create | Unknown; the seeder retries with today's date if PayPal rejects it (days-overdue will then be smaller) |
