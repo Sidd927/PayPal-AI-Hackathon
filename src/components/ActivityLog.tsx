@@ -19,6 +19,7 @@ const ACTOR: Record<string, string> = { ai: "Claude", rules: "Rules", unstuck: "
 
 function receiptText(d: any): string {
   const r = d?.receipts ?? (d?.receipt ? [d.receipt] : null);
+  if (d?.request_id) return `Claude request ${d.request_id}${typeof d.latency_ms === "number" ? `, ${(d.latency_ms / 1000).toFixed(1)}s` : ""}`;
   if (!Array.isArray(r) || !r.length) return d?.debugId ? `debug id ${d.debugId}` : "";
   return r.map((x: any) => `${x.simulated ? "sim " : ""}${x.operation} → ${x.status}${x.debugId && !x.simulated ? ` (${x.debugId})` : ""}`).join("; ");
 }
@@ -38,7 +39,7 @@ export function ActivityLog() {
       { headerName: "Who", field: "actor", width: 110, valueFormatter: (p) => ACTOR[p.value] ?? p.value, filter: true },
       { headerName: "Invoice", field: "client", width: 190, valueFormatter: (p) => (p.data?.client ? `${p.data.client} (${p.data.invoice_number})` : "—"), filter: true },
       { headerName: "What happened", field: "summary", flex: 2, minWidth: 320, wrapText: true, autoHeight: true },
-      { headerName: "PayPal receipt", colId: "receipt", flex: 1, minWidth: 220, valueGetter: (p) => receiptText(p.data?.data), wrapText: true, autoHeight: true, cellClass: "text-xs text-ink-soft" },
+      { headerName: "Receipt", colId: "receipt", flex: 1, minWidth: 220, valueGetter: (p) => receiptText(p.data?.data), wrapText: true, autoHeight: true, cellClass: "text-xs text-ink-soft" },
     ],
     [],
   );

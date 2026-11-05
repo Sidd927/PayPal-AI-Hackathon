@@ -33,6 +33,10 @@ export type ScenarioResult = {
   safetyViolations: string[];
   decisions: string[];
   error?: string;
+  /** Measured, when an API call was made. */
+  requestId?: string | null;
+  latencyMs?: number;
+  usage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number | null; cache_creation_input_tokens: number | null };
 };
 
 const norm = (s: string) => s.toLowerCase().replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/…$/, "").replace(/\s+/g, " ").trim();
@@ -122,6 +126,9 @@ export async function runScenario(s: Scenario): Promise<ScenarioResult> {
     safetyViolations: safety,
     decisions: decided.map(({ p, d }) => `${p.type}:${d.decision}`),
     error: r.error,
+    requestId: r.meta?.requestId ?? null,
+    latencyMs: r.meta?.latencyMs,
+    usage: r.meta?.usage,
   };
 }
 
@@ -166,5 +173,41 @@ export function summarise(results: ScenarioResult[]) {
     meanConfidenceWhenRight: avg(correct.map((r) => r.confidence)),
     meanConfidenceWhenWrong: avg(wrong.map((r) => r.confidence)),
     errors: results.filter((r) => r.error).length,
+    aiByStatus: Object.fromEntries([...new Set(results.map((r) => r.ai))].map((st) => [st, results.filter((r) => r.ai === st).length])),
+    // Accuracy over the scenarios Claude actually answered (fallbacks excluded), so a partial run can't blur the two.
+    claudeOnly: (() => {
+      const rs = results.filter((r) => r.ai === "used");
+      return {
+        of: rs.length,
+        reasonCorrectStrict: rs.filter((r) => r.reasonStrictOk).length,
+        abstained: rs.filter((r) => r.abstained).length,
+        actionAppropriate: rs.filter((r) => r.actionOk).length,
+        forbiddenProposed: rs.filter((r) => r.forbiddenProposed.length).length,
+        safetyViolations: rs.filter((r) => r.safetyViolations.length).length,
+        hallucinatedQuotes: rs.filter((r) => r.hallucinatedQuotes.length).length,
+        byCategory: Object.fromEntries(
+          [...new Set(rs.map((r) => r.category))].map((c) => {
+            const cs = rs.filter((r) => r.category === c);
+            return [c, { of: cs.length, reasonCorrectStrict: cs.filter((r) => r.reasonStrictOk).length, abstained: cs.filter((r) => r.abstained).length, actionAppropriate: cs.filter((r) => r.actionOk).length }];
+          }),
+        ),
+        confidenceBuckets: {
+          "<0.5": rs.filter((r) => r.confidence < 0.5).length,
+          "0.5-0.7": rs.filter((r) => r.confidence >= 0.5 && r.confidence < 0.7).length,
+          "0.7-0.85": rs.filter((r) => r.confidence >= 0.7 && r.confidence < 0.85).length,
+          ">=0.85": rs.filter((r) => r.confidence >= 0.85).length,
+        },
+      };
+    })(),
+    latencyMs: (() => {
+      const xs = results.map((r) => r.latencyMs).filter((x): x is number => typeof x === "number").sort((a, b) => a - b);
+      const q = (p: number) => (xs.length ? xs[Math.min(xs.length - 1, Math.floor(p * xs.length))]! : null);
+      return { measured: xs.length, p50: q(0.5), p90: q(0.9), max: xs.at(-1) ?? null };
+    })(),
+    tokens: (() => {
+      const us = results.map((r) => r.usage).filter((u): u is NonNullable<ScenarioResult["usage"]> => !!u);
+      const sum = (k: keyof NonNullable<ScenarioResult["usage"]>) => us.reduce((a, u) => a + (u[k] ?? 0), 0);
+      return { calls: us.length, input: sum("input_tokens"), output: sum("output_tokens"), cacheRead: sum("cache_read_input_tokens"), cacheWrite: sum("cache_creation_input_tokens") };
+    })(),
   };
 }

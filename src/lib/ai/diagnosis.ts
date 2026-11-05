@@ -153,6 +153,14 @@ export type DiagnosisResult = {
   ai: AiStatus;
   /** Short, owner-readable reason when AI wasn't used. Never contains request bodies or credentials. */
   error?: string;
+  /** Evidence of the API call, when one was made: Anthropic request id, wall-clock latency, token usage. */
+  meta?: DiagnosisCallMeta;
+};
+export type DiagnosisCallMeta = {
+  requestId: string | null;
+  latencyMs: number;
+  stopReason?: string | null;
+  usage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number | null; cache_creation_input_tokens: number | null };
 };
 
 /**
@@ -221,6 +229,7 @@ export async function diagnose(input: DiagnosisInput): Promise<DiagnosisResult> 
   // Structured output via create() (not parse()): parse() throws on a cut-off answer before stop_reason can be
   // read, which would make truncation look like a network error. Here we check the stop reason first.
   const { parse: _sdkParse, ...format } = betaZodOutputFormat(DiagnosisOutput);
+  const t0 = Date.now();
   let response;
   try {
     response = await client.beta.messages.create(
@@ -237,11 +246,18 @@ export async function diagnose(input: DiagnosisInput): Promise<DiagnosisResult> 
     );
   } catch (err) {
     const d = describeApiError(err);
-    return rules(d.ai, d.error);
+    return { ...rules(d.ai, d.error), meta: { requestId: err instanceof Anthropic.APIError ? (err.requestID ?? null) : null, latencyMs: Date.now() - t0 } };
   }
+  const u = response.usage;
+  const meta: DiagnosisCallMeta = {
+    requestId: (response as { _request_id?: string | null })._request_id ?? null,
+    latencyMs: Date.now() - t0,
+    stopReason: response.stop_reason,
+    usage: u ? { input_tokens: u.input_tokens, output_tokens: u.output_tokens, cache_read_input_tokens: u.cache_read_input_tokens ?? null, cache_creation_input_tokens: u.cache_creation_input_tokens ?? null } : undefined,
+  };
   const verdict = interpretDiagnosisResponse(response as Parameters<typeof interpretDiagnosisResponse>[0]);
-  if (!verdict.ok) return rules("unusable", verdict.error);
-  return { output: sanitize(verdict.output), source: "ai", model: response.model, ai: "used" };
+  if (!verdict.ok) return { ...rules("unusable", verdict.error), meta };
+  return { output: sanitize(verdict.output), source: "ai", model: response.model, ai: "used", meta };
 }
 
 /** Clamp and clean model output; never trust ranges or formats. */

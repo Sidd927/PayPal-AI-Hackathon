@@ -290,3 +290,49 @@ describe("existing databases are migrated", () => {
     db.close();
   });
 });
+
+describe("measurement evidence (Phase 2)", () => {
+  it("a successful Claude diagnosis records the Anthropic request id, latency and token usage in Activity data", async () => {
+    enableAi();
+    const client = {
+      beta: {
+        messages: {
+          create: async () => {
+            const res: Record<string, unknown> = { model: "claude-opus-5-5", stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify(VALID) }], usage: { input_tokens: 1234, output_tokens: 567, cache_read_input_tokens: 0, cache_creation_input_tokens: 900 } };
+            Object.defineProperty(res, "_request_id", { value: "req_success_1", enumerable: false });
+            return res;
+          },
+        },
+      },
+    };
+    setAnthropic(client as unknown as Anthropic);
+    await diagnoseInvoice(ids.northwind!);
+    const ev = repo.listEvents({ invoiceId: ids.northwind!, limit: 10 }).find((e) => e.kind === "diagnosed")!;
+    const data = JSON.parse(ev.data_json!);
+    expect(data).toMatchObject({ ai_status: "used", request_id: "req_success_1", usage: { input_tokens: 1234, output_tokens: 567, cache_creation_input_tokens: 900 } });
+    expect(typeof data.latency_ms).toBe("number");
+    expect(ev.summary).toMatch(/Claude \(claude-opus-5-5\)/);
+  });
+
+  it("a failed call keeps the API's request id for support, without counting as AI", async () => {
+    enableAi();
+    fakeClaude(apiError(529, "overloaded_error", "Overloaded"));
+    await diagnoseInvoice(ids.northwind!);
+    const data = JSON.parse(repo.listEvents({ invoiceId: ids.northwind!, limit: 10 }).find((e) => e.kind === "diagnosed")!.data_json!);
+    expect(data).toMatchObject({ ai_status: "failed", source: "rules", request_id: "req_test123" });
+  });
+
+  it("eval summary: a mixed run is labelled 'mixed' and Claude-only accuracy excludes the fallbacks", async () => {
+    const { summarise } = await import("../eval/harness");
+    const base = { category: "core", model: null, reasonOk: true, abstained: false, actionOk: true, forbiddenProposed: [], extractionOk: null, confidence: 0.9, confidenceOk: true, hallucinatedQuotes: [], safetyViolations: [], decisions: [], reason: "forgot", action: "send_reminder" };
+    const s = summarise([
+      { ...base, id: "a", source: "ai", ai: "used", reasonStrictOk: true, latencyMs: 4000, usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 80, cache_creation_input_tokens: 0 } },
+      { ...base, id: "b", source: "ai", ai: "used", reasonStrictOk: false, confidence: 0.4, latencyMs: 6000, usage: { input_tokens: 100, output_tokens: 70, cache_read_input_tokens: 80, cache_creation_input_tokens: 0 } },
+      { ...base, id: "c", source: "rules", ai: "failed", reasonStrictOk: true, latencyMs: 30, error: "AI request failed: HTTP 529" },
+    ] as never);
+    expect(s).toMatchObject({ source: "mixed", aiUsed: 2, aiFallbacks: 1, aiByStatus: { used: 2, failed: 1 } });
+    expect(s.claudeOnly).toMatchObject({ of: 2, reasonCorrectStrict: 1, confidenceBuckets: { "<0.5": 1, ">=0.85": 1 } });
+    expect(s.tokens).toEqual({ calls: 2, input: 200, output: 120, cacheRead: 160, cacheWrite: 0 });
+    expect(s.latencyMs.measured).toBe(3);
+  });
+});

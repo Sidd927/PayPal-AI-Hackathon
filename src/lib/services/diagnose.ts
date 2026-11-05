@@ -116,7 +116,7 @@ export async function diagnoseInvoice(invoiceId: string, opts: { force?: boolean
     kind: "diagnosed",
     actor: result.source === "ai" ? "ai" : "rules",
     summary: `Diagnosed as “${o.reason.replace("_", " ")}” (${Math.round(o.confidence * 100)}% confidence). ${aiLine(result)}`,
-    data: { diagnosis_id: diagnosisId, model: result.model, source: result.source, ai_status: result.ai, error: result.error },
+    data: { diagnosis_id: diagnosisId, model: result.model, source: result.source, ai_status: result.ai, error: result.error, request_id: result.meta?.requestId ?? null, latency_ms: result.meta?.latencyMs ?? null, usage: result.meta?.usage ?? null },
   });
   if (o.reason === "dispute") repo.setDisputed(invoiceId, true);
   else if (row.disputed && o.reason !== "unknown") repo.setDisputed(invoiceId, false);

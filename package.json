@@ -19,7 +19,8 @@
     "check:sandbox": "tsx scripts/check-sandbox.ts",
     "test:contract": "node scripts/contract-test.mjs",
     "test:all": "npm run lint && npm test && npm run build && npm run test:contract",
-    "eval": "tsx eval/run.ts"
+    "eval": "tsx eval/run.ts",
+    "verify:ai": "tsx scripts/verify-ai.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "1.3.0",
