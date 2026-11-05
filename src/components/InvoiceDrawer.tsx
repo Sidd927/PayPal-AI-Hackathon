@@ -4,7 +4,7 @@ import type { invoiceDetail } from "@/lib/services/board";
 import { ACTION_META, REASON_META } from "@/lib/domain";
 import { api, money, relTime, shortDate } from "@/lib/client";
 import { ActionCard } from "./ActionCard";
-import { describeAiStatus } from "@/lib/ai-status";
+import { describeAiStatus, providerLabel } from "@/lib/ai-status";
 import { STAGE_META } from "./ResolutionLoop";
 import { LOOP_STAGES } from "@/lib/services/loop-stages";
 import { Button, ReasonPhrase, RiskPill, Spinner, StatusPill } from "./ui";
@@ -193,13 +193,14 @@ export function InvoiceDrawer({ id, onClose, onChanged, version }: { id: string;
                         <span className="bg-ink" style={{ width: `${Math.round(d.diagnosis.confidence * 100)}%` }} />
                       </span>
                       <span title="Confidence is the model's own estimate, prompted to stay below 50% when the only signal is silence and above 85% only when the client states the blocker. It is not calibrated against outcomes yet.">
-                        {Math.round(d.diagnosis.confidence * 100)}% confidence (self-reported), {describeAiStatus(d.diagnosis.source, d.diagnosis.ai_status, d.diagnosis.model).long}, {relTime(d.diagnosis.created_at)}
+                        {Math.round(d.diagnosis.confidence * 100)}% confidence (self-reported), {describeAiStatus(d.diagnosis.source, d.diagnosis.ai_status, d.diagnosis.model, d.diagnosis.ai_provider).long}, {relTime(d.diagnosis.created_at)}
                       </span>
                     </div>
-                    {describeAiStatus(d.diagnosis.source, d.diagnosis.ai_status).problem && (
+                    {describeAiStatus(d.diagnosis.source, d.diagnosis.ai_status, null, d.diagnosis.ai_provider).problem && (
                       <p role="status" className="mt-2 rounded-[var(--radius-tight)] bg-marigold-wash px-3 py-1.5 text-xs text-ink">
-                        {(d.diagnosis.ai_detail ?? "Claude wasn't used for this diagnosis").replace(/\.?$/, ".")} This diagnosis comes from the built-in rules.{" "}
-                        <span className="text-ink-soft">Use “Diagnose again” to retry with Claude.</span>
+                        <span className="font-medium">{describeAiStatus(d.diagnosis.source, d.diagnosis.ai_status, null, d.diagnosis.ai_provider).badge}.</span>{" "}
+                        {(d.diagnosis.ai_detail ?? "The AI wasn't used for this diagnosis").replace(/\.?$/, ".")} This diagnosis comes from the built-in rules.{" "}
+                        <span className="text-ink-soft">Use “Diagnose again” to retry with {providerLabel(d.diagnosis.ai_provider) === "AI" ? "the AI" : providerLabel(d.diagnosis.ai_provider)}.</span>
                       </p>
                     )}
 

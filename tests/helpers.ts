@@ -1,14 +1,23 @@
 import { openDb, setDb } from "@/lib/db";
 import { setAnthropic } from "@/lib/ai/anthropic";
+import { setGeminiClient } from "@/lib/ai/providers/gemini";
+import { resetPacing } from "@/lib/ai/shared";
 
 /** Fresh in-memory database + simulation gateway + no AI (rules-only) for each test. */
 export function freshEnv() {
   delete process.env.PAYPAL_CLIENT_ID;
   delete process.env.PAYPAL_CLIENT_SECRET;
   delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  delete process.env.GEMINI_MODEL;
+  delete process.env.ANTHROPIC_MODEL;
+  delete process.env.AI_PROVIDER;
+  delete process.env.UNSTUCK_AI;
   process.env.APP_BASE_URL = "http://localhost:3000";
   setDb(openDb(":memory:"));
   setAnthropic(null);
+  setGeminiClient(null);
+  resetPacing();
 }
 
 /** A scripted fetch for PayPal contract tests. Records every request. */

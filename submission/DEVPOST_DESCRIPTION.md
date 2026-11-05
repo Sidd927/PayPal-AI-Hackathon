@@ -2,10 +2,10 @@
 
 **Tagline (≤ 200 chars):** Every unpaid invoice has a reason. Unstuck finds it, fixes it inside PayPal within your rules, and follows it until the money arrives.
 
-**Built with:** paypal-invoicing-api, paypal-webhooks, claude, anthropic-sdk, ag-grid, ag-studio, next.js, react, typescript, tailwindcss, sqlite, vitest, playwright
+**Built with:** paypal-invoicing-api, paypal-webhooks, gemini, google-genai-sdk, claude (optional), anthropic-sdk, ag-grid, ag-studio, next.js, react, typescript, tailwindcss, sqlite, vitest, playwright
 
 **AI tools used (disclosure):**
-- *In the product:* Anthropic Claude (`claude-opus-5-5`) through the Anthropic SDK, used for:
+- *In the product:* Google Gemini (`gemini-3.5-flash-lite`) through the Google Gen AI SDK by default, or optionally Anthropic Claude through the Anthropic SDK, used for:
   - structured-output invoice diagnosis;
   - a tool-using assistant on the client's resolution page;
   - optionally, AG Studio's built-in Insights agents.
@@ -67,7 +67,7 @@ Our own agent, built with the AG Studio Agent Framework, answers with names and 
   - request shapes checked against PayPal's own Agent Toolkit source;
   - idempotency keys on every write;
   - webhooks deduplicated and treated as signals: we always re-read the invoice.
-- **Claude** in two roles:
+- **Gemini** (default; Claude optional, behind one provider interface) in two roles:
   - structured-output diagnosis, sanitised and converted to typed actions *by code*;
   - a client-facing assistant with four strict tools, which can only surface plans the policy engine produced.
 - **A deterministic policy engine** between the AI and PayPal:
@@ -78,7 +78,7 @@ Our own agent, built with the AG Studio Agent Framework, answers with names and 
 - **AG Studio** for Insights:
   - a themed report over five read-only tables;
   - a custom `clientToolRunner` agent registered with `createAiHarness`;
-  - with a key, Studio's built-in agents run through a server-side `AgLlmAdapter` for Claude.
+  - with a key, Studio's built-in agents run through a server-side `AgLlmAdapter` for the configured provider.
 - **Next.js 16, React 19, Tailwind 4, SQLite.**
 
 ## Challenges
@@ -86,7 +86,7 @@ Our own agent, built with the AG Studio Agent Framework, answers with names and 
 - **PayPal's invoice update replaces the whole invoice.** We GET, strip read-only fields, change one thing and PUT. This is proven against a strict mock that rejects read-only fields.
 - **Letting an AI talk money with a client safely.** The assistant can only ask the rules engine for a plan, and nothing happens until the client accepts.
 - **Stale approvals.** Our own audit found that an approved action ran even if the invoice had changed since. Execution now re-runs the rules against PayPal's current state, and the tests fail if that check is removed.
-- **No sandbox access from our build environment.** Its network policy blocked PayPal's sandbox. We built a strict PayPal mock and ran the real app against it over HTTP (25 checks, 104 API calls). The live sandbox run has a step-by-step runbook. _[Replace this line with the sandbox result once it is recorded.]_
+- **No sandbox access from our build environment.** Its network policy blocked PayPal's sandbox. We built a strict PayPal mock and ran the real app against it over HTTP (26 checks, 177 API calls). The live sandbox run has a step-by-step runbook. _[Replace this line with the sandbox result once it is recorded.]_
 
 ## Accomplishments
 
@@ -100,10 +100,10 @@ Our own agent, built with the AG Studio Agent Framework, answers with names and 
 
   Code stops each one.
 - Test coverage:
-  - 100 unit, agent, adversarial and reliability tests;
-  - 25 contract checks;
+  - 208 unit, agent, adversarial, reliability, AI-provider and AI tool-security tests;
+  - 26 contract checks;
   - 22 browser checks;
-  - a 26-scenario AI evaluation with strict scoring. The rules-only baseline scored 14/26 correct with 12 abstentions, 0 forbidden actions and 0 safety violations. _[Add the Claude result once it has run; don't publish one before.]_
+  - a 26-scenario AI evaluation with strict scoring. The rules-only baseline scored 14/26 correct with 12 abstentions, 0 forbidden actions and 0 safety violations. _[Add the Gemini result once it has run; don't publish one before.]_
 
 ## What we learned
 
@@ -111,7 +111,7 @@ The hard part of getting paid isn't the reminder. It's finding out what's actual
 
 ## What's next
 
-- Publish the Claude evaluation.
+- Publish the Gemini evaluation.
 - An email-forwarding inbox, so client replies arrive without copy-paste.
 - Learn which remedies work for which reasons, once real outcomes exist.
 - Expose the policy-gated actions as an MCP server, so a client's AP agent can settle through the same rules.
@@ -120,6 +120,6 @@ The hard part of getting paid isn't the reminder. It's finding out what's actual
 
 - **Code:** https://github.com/Sidd927/PayPal-AI-Hackathon (MIT)
 - **Local, no keys (2 minutes):** run `npm install && npm run dev`, open http://localhost:3000 and press **Run the agent**. This is a labelled simulation: no PayPal calls, rules-only AI. The judge walkthrough is in `submission/DEMO_WALKTHROUGH.md`.
-- **Local with the PayPal sandbox and Claude:** README → "Run it".
+- **Local with the PayPal sandbox and AI (Gemini):** README → "Run it".
 - **Hosted demo:** _add only once deployed_
 - **Video:** _YouTube URL_

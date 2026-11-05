@@ -30,7 +30,7 @@ Open <http://localhost:3000>. The demo studio loads automatically, and the heade
    Each answer names clients and amounts from the data. Try one it can't answer ("What's the weather?"). Click **Build your own report**, open the AI panel on the right and ask there: the same *Unstuck Insights* agent runs inside AG Studio.
 10. **Activity** lists every decision and PayPal call. **Your rules** lets you change the limits. **Reset demo** restores the scenario.
 
-## Option B: real PayPal sandbox and Claude
+## Option B: real PayPal sandbox and AI (Gemini)
 
 1. Create a sandbox REST app at developer.paypal.com, and find your sandbox *personal* account's email.
 2. Copy the env template:
@@ -39,7 +39,7 @@ Open <http://localhost:3000>. The demo studio loads automatically, and the heade
    cp .env.example .env.local
    ```
 
-   Then set `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `ANTHROPIC_API_KEY` and, optionally, `DEMO_PAYER_EMAIL`. That must be a sandbox Personal account registered outside India: PayPal refuses to send invoices to India-based recipients.
+   Then set `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `GEMINI_API_KEY` (free key from <https://aistudio.google.com/apikey>; for Claude instead, `AI_PROVIDER=anthropic` and `ANTHROPIC_API_KEY`) and, optionally, `DEMO_PAYER_EMAIL`. That must be a sandbox Personal account registered outside India: PayPal refuses to send invoices to India-based recipients.
 3. Check the connection:
 
    ```bash
@@ -62,7 +62,7 @@ Open <http://localhost:3000>. The demo studio loads automatically, and the heade
    npm run dev
    ```
 
-   The header shows **PayPal sandbox** and **Claude**.
+   The header shows **PayPal sandbox** and **AI: Gemini**. To check the AI on its own first (simulation, no PayPal calls): `npm run verify:ai`.
 6. Follow steps 2–8 above. In step 6 the button reads **Pay $400.00 or more with PayPal**. It opens PayPal's sandbox invoice page; log in as the sandbox buyer and pay $400.
 7. With a registered webhook, the board updates within seconds. Otherwise press **Sync with PayPal**.
 

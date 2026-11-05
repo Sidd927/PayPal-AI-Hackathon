@@ -29,7 +29,8 @@ const theme = studioTheme.withParams({
 
 export default function Insights() {
   const [data, setData] = useState<InsightsTables | null>(null);
-  const [claude, setClaude] = useState(false);
+  /** Configured AI provider label (e.g. "Gemini") when the server has one; enables Studio's built-in agents. */
+  const [aiLabel, setAiLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [answer, setAnswer] = useState<string | null>(null);
@@ -44,11 +45,11 @@ export default function Insights() {
       dataRef.current = d;
       setData(d);
     }, (e) => setError(e.message));
-    api<{ ai: string }>("/api/health").then((h) => setClaude(h.ai === "claude"), () => {});
+    api<{ ai: string; aiLabel: string | null }>("/api/health").then((h) => setAiLabel(h.ai !== "rules" ? h.aiLabel : null), () => {});
   }, []);
   const sources = useMemo(() => (data ? dataSources(data) : null), [data]);
   const initialReport = useMemo(() => structuredClone(INITIAL_REPORT), []);
-  const ai = useCallback((p: { api: AgStudioApi }) => buildHarness(p.api, () => dataRef.current!, claude), [claude]);
+  const ai = useCallback((p: { api: AgStudioApi }) => buildHarness(p.api, () => dataRef.current!, !!aiLabel), [aiLabel]);
 
   /** The same deterministic agent logic, reachable from the page as well as Studio's chat. */
   function ask(question: string) {
@@ -92,7 +93,7 @@ export default function Insights() {
       </div>
       {answer && <p role="status" className="mb-3 rounded-[var(--radius-tight)] bg-ok-wash/70 px-3 py-2 text-sm text-ink">{answer}</p>}
       <p className="mb-2 text-xs text-ink-faint">
-        {data.currency} only{data.excludedOtherCurrency ? `; ${data.excludedOtherCurrency} invoice(s) in other currencies excluded` : ""}. In <em>Build your own report</em>, the AG Studio AI panel hosts the <strong>Unstuck Insights</strong> agent, which answers the questions above from these read-only tables{claude ? "; Studio's built-in agents run on Claude for anything else." : ". Connect Claude to enable Studio's built-in agents for open-ended questions."}
+        {data.currency} only{data.excludedOtherCurrency ? `; ${data.excludedOtherCurrency} invoice(s) in other currencies excluded` : ""}. In <em>Build your own report</em>, the AG Studio AI panel hosts the <strong>Unstuck Insights</strong> agent, which answers the questions above from these read-only tables{aiLabel ? `; Studio's built-in agents run on ${aiLabel} for anything else.` : ". Connect an AI provider (GEMINI_API_KEY) to enable Studio's built-in agents for open-ended questions."}
       </p>
       <div style={{ height: mode === "edit" ? 1060 : pageHeight(pageId) }} className="overflow-hidden rounded-[var(--radius-soft)] border border-rule bg-surface">
         <AgStudio

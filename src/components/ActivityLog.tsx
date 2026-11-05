@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import { providerLabel } from "@/lib/ai-status";
 import { AgGridReact } from "ag-grid-react";
 import { AllCommunityModule, type ColDef, ModuleRegistry, themeQuartz } from "ag-grid-community";
 import { api } from "@/lib/client";
@@ -15,11 +16,15 @@ const theme = themeQuartz.withParams({
   headerTextColor: "#52645c", borderColor: "#d3ddd2", rowBorder: { color: "#e3e9e2" }, columnBorder: false, wrapperBorderRadius: 10, accentColor: "#a86b0c", spacing: 6,
 });
 
-const ACTOR: Record<string, string> = { ai: "Claude", rules: "Rules", unstuck: "Unstuck", paypal: "PayPal", owner: "You", client: "Client", agent: "Unstuck", payer: "Client", system: "System", simulation: "Simulation" };
+const ACTOR: Record<string, string> = { ai: "AI", rules: "Rules", unstuck: "Unstuck", paypal: "PayPal", owner: "You", client: "Client", agent: "Unstuck", payer: "Client", system: "System", simulation: "Simulation" };
 
 function receiptText(d: any): string {
   const r = d?.receipts ?? (d?.receipt ? [d.receipt] : null);
-  if (d?.request_id) return `Claude request ${d.request_id}${typeof d.latency_ms === "number" ? `, ${(d.latency_ms / 1000).toFixed(1)}s` : ""}`;
+  // AI evidence: provider, model, request id and latency, when a provider call was made.
+  if (d?.provider && (d.request_id || typeof d.latency_ms === "number")) {
+    const name = providerLabel(d.provider);
+    return [`${name}${d.model ? ` ${d.model}` : ""}`, d.request_id ? `request ${d.request_id}` : null, typeof d.latency_ms === "number" ? `${(d.latency_ms / 1000).toFixed(1)}s` : null].filter(Boolean).join(", ");
+  }
   if (!Array.isArray(r) || !r.length) return d?.debugId ? `debug id ${d.debugId}` : "";
   return r.map((x: any) => `${x.simulated ? "sim " : ""}${x.operation} → ${x.status}${x.debugId && !x.simulated ? ` (${x.debugId})` : ""}`).join("; ");
 }
@@ -36,7 +41,7 @@ export function ActivityLog() {
   const cols = useMemo<ColDef<Ev>[]>(
     () => [
       { headerName: "When", field: "at", width: 150, sort: "desc", valueFormatter: (p) => new Date(p.value).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) },
-      { headerName: "Who", field: "actor", width: 110, valueFormatter: (p) => ACTOR[p.value] ?? p.value, filter: true },
+      { headerName: "Who", field: "actor", width: 110, valueFormatter: (p) => (p.value === "ai" && p.data?.data?.provider ? providerLabel(p.data.data.provider) : (ACTOR[p.value] ?? p.value)), filter: true },
       { headerName: "Invoice", field: "client", width: 190, valueFormatter: (p) => (p.data?.client ? `${p.data.client} (${p.data.invoice_number})` : "—"), filter: true },
       { headerName: "What happened", field: "summary", flex: 2, minWidth: 320, wrapText: true, autoHeight: true },
       { headerName: "Receipt", colId: "receipt", flex: 1, minWidth: 220, valueGetter: (p) => receiptText(p.data?.data), wrapText: true, autoHeight: true, cellClass: "text-xs text-ink-soft" },

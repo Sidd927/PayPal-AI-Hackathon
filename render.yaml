@@ -25,12 +25,12 @@ services:
         sync: false
       - key: DEMO_PAYER_EMAIL
         sync: false
-      - key: ANTHROPIC_API_KEY
+      - key: AI_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
         sync: false
-      - key: ANTHROPIC_MODEL
-        value: claude-opus-5-5
-      - key: ANTHROPIC_EFFORT
-        value: medium
+      - key: GEMINI_MAX_RPM
+        value: "10"
       - key: AI_DAILY_CALL_LIMIT
         value: "300"
       - key: APP_BASE_URL

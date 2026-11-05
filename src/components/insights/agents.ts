@@ -4,8 +4,8 @@
  * - "Unstuck Insights" is a custom agent built with `clientToolRunner`. It understands a fixed set of
  *   receivables questions with a deterministic router, opens a predefined read-only report page with
  *   AG Studio's own API, and answers with numbers computed from the same tables. It needs no LLM.
- * - When Claude is configured on the server, Studio's built-in agents (Lead, Planning, Data, Page,
- *   Widget) are added, running against `claudeAdapter`, which proxies to /api/insights/llm so the
+ * - When an AI provider is configured on the server (Gemini by default), Studio's built-in agents (Lead,
+ *   Planning, Data, Page, Widget) are added, running against `serverAiAdapter`, which proxies to /api/insights/llm so the
  *   API key never reaches the browser.
  */
 import { clientToolRunner, createAiHarness, directLlmRunner, type AgAiEvent, type AgAiHarness, type AgLlmAdapter, type AgLlmRequest, type AgLlmResponse, type AgStudioApi } from "ag-studio";
@@ -65,8 +65,8 @@ export function unstuckInsightsAgent(api: AgStudioApi, getData: () => InsightsTa
   });
 }
 
-/** LLM adapter for Studio's built-in agents: one turn per request, proxied to Claude by the server. */
-export const claudeAdapter: AgLlmAdapter = {
+/** LLM adapter for Studio's built-in agents: one turn per request, proxied to the configured AI provider by the server. */
+export const serverAiAdapter: AgLlmAdapter = {
   executeTurn(request: AgLlmRequest, options) {
     const complete: Promise<AgLlmResponse> = fetch("/api/insights/llm", {
       method: "POST",
@@ -101,9 +101,9 @@ export const claudeAdapter: AgLlmAdapter = {
   },
 };
 
-export function buildHarness(api: AgStudioApi, getData: () => InsightsTables, claude: boolean): AgAiHarness {
+export function buildHarness(api: AgStudioApi, getData: () => InsightsTables, aiAvailable: boolean): AgAiHarness {
   return createAiHarness(api, (ctx) => {
-    const builtIns = claude ? (["lead", "planning", "data", "page", "widget"] as const).map((id) => directLlmRunner({ ...ctx.builtIn[id], adapter: claudeAdapter })) : [];
+    const builtIns = aiAvailable ? (["lead", "planning", "data", "page", "widget"] as const).map((id) => directLlmRunner({ ...ctx.builtIn[id], adapter: serverAiAdapter })) : [];
     return {
       agents: [unstuckInsightsAgent(api, getData), ...builtIns],
       primary: "unstuck",

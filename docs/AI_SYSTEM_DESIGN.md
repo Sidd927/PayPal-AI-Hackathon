@@ -1,6 +1,11 @@
 # AI System Design
 
-Two AI roles, both using Claude through the official `@anthropic-ai/sdk`. Default model `claude-opus-5-5` (`ANTHROPIC_MODEL`), with server-side refusal fallback enabled (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`) and the stable system prompts cached (`cache_control`).
+Two AI roles, served by a **provider-independent interface** (`src/lib/ai/providers/`): `generateStructured` for diagnosis, `chatTurn` for tool-using conversations, `checkModel` for verification.
+
+- **Gemini (default):** official `@google/genai` SDK, default model `gemini-3.5-flash-lite` (`GEMINI_MODEL`), JSON output constrained by `responseJsonSchema`, function calling with thought signatures echoed back, client-side pacing (`GEMINI_MAX_RPM`).
+- **Claude (optional, `AI_PROVIDER=anthropic`):** official `@anthropic-ai/sdk`, default `claude-opus-5-5` (`ANTHROPIC_MODEL`), server-side refusal fallback (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`) and cached system prompts. This is the Phase 1–2 implementation, unchanged in behaviour.
+
+Everything below the interface (prompts, schema validation, quote checking, sanitising, policy, rules fallback, reuse/cooldown, daily budget) is shared by both providers. Setup, limits and status meanings are in [`AI_PROVIDERS.md`](AI_PROVIDERS.md).
 
 ## 1. Diagnosis agent (owner side)
 
@@ -10,13 +15,13 @@ Two AI roles, both using Claude through the official `@anthropic-ai/sdk`. Defaul
 |---|---|
 | Inputs | Invoice facts (amounts, dates, days overdue, items, reference, partial-payment state), client history (on-time vs late, average days late, relationship), reminder history, active plan, up to 12 recent messages |
 | Context handling | Client text wrapped in `<client_message>` tags (closing tags stripped from content); system prompt declares it data, not instructions |
-| Output | **Structured output** (`client.beta.messages.parse` + `betaZodOutputFormat`): `reason` (9-value enum), `confidence`, `summary`, `evidence[]`, `extracted{po_number, new_contact_email, promised_date, proposed_first_payment, disputed_item}`, `recommended_action` (8-value enum), `rationale`, `message{subject, body}`, `plan{installment_count, first_payment}`, `discount_percent`, `tone` |
-| Effort | `ANTHROPIC_EFFORT` (default `medium`) |
+| Output | **Structured output** from the zod schema (Gemini: `responseMimeType: application/json` + `responseJsonSchema`, falling back once to JSON mode if the API rejects the schema; Claude: `betaZodOutputFormat`), always re-validated by Unstuck: `reason` (9-value enum), `confidence`, `summary`, `evidence[]`, `extracted{po_number, new_contact_email, promised_date, proposed_first_payment, disputed_item}`, `recommended_action` (8-value enum), `rationale`, `message{subject, body}`, `plan{installment_count, first_payment}`, `discount_percent`, `tone` |
+| Effort | Claude only: `ANTHROPIC_EFFORT` (default `medium`) |
 | Validation | `sanitize()` clamps confidence, trims lengths, validates email/date/amount/PO formats — invalid values become `null` |
 | Conversion | `proposalsFromDiagnosis()` turns the recommendation into typed actions **in code**: plan arithmetic via `buildPlan`, clamped to policy; discount clamped to policy max; PO taken only from the extracted, validated field; payment-page link appended by code (the model never writes URLs); disputes also yield `pause_reminders` |
 | Guardrail | Every action → `evaluateAction` (policy) → `auto` / `approve` / `block` |
 | Caching | `input_hash` of the facts; unchanged invoices aren't re-diagnosed |
-| Fallback | Missing key, budget exhausted, API error, refusal, or unparseable output → `diagnoseWithRules()` (keyword heuristics + templates), labelled "rules only" in the UI |
+| Fallback | Not configured, budget exhausted, rate limited (429), request failed, or an unusable answer (refusal/safety block, cut off, invalid JSON, schema mismatch) → `diagnoseWithRules()` (keyword heuristics + templates), recorded with that status and labelled in the UI ("AI: Rate limited", "AI: Request failed", …). Failed invoices are not retried for 30 minutes unless the owner presses *Diagnose again* |
 
 ## 2. Payer agent (client side)
 
@@ -52,11 +57,11 @@ Every diagnosis (model id, source, error), proposal (decision and checks), appro
 
 ## Cost controls
 
-`AI_DAILY_CALL_LIMIT`, input-hash caching, prompt caching, bounded `max_tokens`, 60 s timeout with 2 SDK retries. A full board diagnosis is ~7 calls.
+`AI_DAILY_CALL_LIMIT` (any provider), input-hash reuse, a 30-minute retry cooldown after a failure, bounded output tokens, a 120 s per-request timeout with at most one retry (Gemini: only on 408/5xx, never on 429), Gemini request pacing (`GEMINI_MAX_RPM`, default 10/min), and Claude prompt caching. A full board diagnosis is ~8 calls.
 
 ## Phase 3: Insights agents (AG Studio)
 
 - **Unstuck Insights** (`src/components/insights/agents.ts`): an AG Studio Agent Framework agent built with `clientToolRunner` and registered as primary with `createAiHarness`. It uses no LLM. A keyword router maps a question to one of seven predefined read-only reports, opens it with `api.setState`, and answers with figures computed from the same tables (`explain()`). Questions it can't map are declined with the list of supported ones.
-- **Studio built-in agents** (lead, planning, data, page, widget): enabled only when Claude is configured. They use `claudeAdapter` (an `AgLlmAdapter`), which posts each turn to `/api/insights/llm`. The server translates Studio's items to Claude messages and tool_use blocks and back, and executes no tools itself.
+- **Studio built-in agents** (lead, planning, data, page, widget): enabled only when an AI provider is configured. They use `serverAiAdapter` (an `AgLlmAdapter`), which posts each turn to `/api/insights/llm`. The server translates Studio's items to the neutral transcript (`src/lib/ai/studio-chat.ts`) and calls the provider's `chatTurn`; Gemini thought signatures are kept server-side for 30 minutes and restored on the next turn. The server executes no tools itself.
 - **Data boundary:** both see only `insightsTables()`, primary currency only, with no emails, tokens, messages or PayPal ids.
 - **Evaluation:** strict scoring counts `unknown` as an abstention, never correct; results are reported per category with denominators (`qa/REAL_AI_EVALUATION_REPORT.md`).

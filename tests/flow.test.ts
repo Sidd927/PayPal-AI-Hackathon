@@ -152,6 +152,7 @@ function fakeClaude(script: { parse?: (p: any) => any; create?: (p: any, n: numb
 describe("AI diagnosis is validated and policy-bounded", () => {
   it("uses structured output, sanitises fields, and the policy engine bounds the plan", async () => {
     const ids = await seeded();
+    process.env.AI_PROVIDER = "anthropic";
     process.env.ANTHROPIC_API_KEY = "test";
     let seenSystem = "";
     setAnthropic(
@@ -200,6 +201,7 @@ describe("AI diagnosis is validated and policy-bounded", () => {
 
   it("falls back to rules when the model errors", async () => {
     const ids = await seeded();
+    process.env.AI_PROVIDER = "anthropic";
     process.env.ANTHROPIC_API_KEY = "test";
     setAnthropic(fakeClaude({ parse: () => { throw new Error("overloaded"); } }));
     await diagnoseInvoice(ids.northwind!);
@@ -213,12 +215,13 @@ describe("AI diagnosis is validated and policy-bounded", () => {
 describe("payer agent tool loop", () => {
   it("only surfaces server-computed offers; injection attempts can't create out-of-policy plans", async () => {
     const ids = await seeded();
+    process.env.AI_PROVIDER = "anthropic";
     process.env.ANTHROPIC_API_KEY = "test";
     setAnthropic(
       fakeClaude({
         create: (p, n) => {
           if (n === 0) {
-            expect(p.messages.at(-1).content).toContain("<client_message>");
+            expect(JSON.stringify(p.messages.at(-1).content)).toContain("<client_message>");
             return { stop_reason: "tool_use", content: [{ type: "tool_use", id: "t1", name: "propose_payment_plan", input: { installment_count: 12, first_payment_amount: "1.00", first_payment_date: null } }] };
           }
           if (n === 1) {

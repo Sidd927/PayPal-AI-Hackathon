@@ -56,13 +56,13 @@ This is a crowded category, with at least eight entries in this hackathon alone.
 
 ```
 Sync from PayPal → prioritise by risk → for each invoice:
-  gather evidence → diagnose (Claude) → plan → check your rules → act or ask → verify in PayPal
+  gather evidence → diagnose (AI) → plan → check your rules → act or ask → verify in PayPal
 plus follow-ups: installments coming due, missed promises (back into the loop)
 ```
 
 - **Evidence vs inference:** every diagnosis shows what the client actually said (verbatim quotes, checked against the conversation) and recorded facts, separately from what the agent infers. When the cause is unknown, it says so.
 
-- **Diagnosis:** Claude (`claude-opus-5-5`) with structured outputs, sanitised, and turned into typed actions *by code*. Plan maths, discount caps, PO and email validation, and links are never taken from the model.
+- **Diagnosis:** Google Gemini by default (`gemini-3.5-flash-lite`; Claude optional) behind a provider-independent interface, with schema-constrained output that Unstuck re-validates, sanitises and turns into typed actions *by code*. Without a key, deterministic rules run and the UI says so. See [`docs/AI_PROVIDERS.md`](docs/AI_PROVIDERS.md). Plan maths, discount caps, PO and email validation, and links are never taken from the model.
 - **Policy engine:** a pure function that classifies every action as *auto* / *needs approval* / *blocked*, with itemised checks shown on each card. Money changes proposed by the agent always need the owner.
 - **Risk:** a transparent heuristic, not a trained model. Every point comes from a named factor, shown in the drawer.
 - **30-day outlook:** grouped by *why* money is expected (agreed plan, promise, payment in transit, coming due); no invented probabilities.
@@ -80,7 +80,7 @@ The screenshots were taken in labelled simulation mode with rules-only AI. See *
 
 - **Receivables board** (AG Grid Community 36): custom React cell renderers (stuck reason, aging, transparent risk, next step), risk-sorted by default, an external filter driven by the reason strip, quick search, pinned totals, CSV export, and change flashing when money moves.
 - **Insights** (AG Studio 3.0): a receivables report over five read-only tables (open invoices, agent actions, payments, promises, approvals), themed with the product's palette, with cross-filtering and a self-serve report builder.
-- **Ask Insights** (Studio Agent Framework): a custom agent, *Unstuck Insights*, built with `clientToolRunner`, runs in Studio's AI panel and on the page. It answers questions like "Which customers account for the highest overdue receivables?", "Which payment promises have been missed?", "Which invoices need owner intervention today?" or "What worked?" from the data, naming clients and amounts. It opens the matching report and declines questions it has no report for instead of guessing. With a Claude key, Studio's five built-in agents also run, through a server-side Claude adapter. Status and limits: [`qa/AG_STUDIO_SPONSOR_READINESS.md`](qa/AG_STUDIO_SPONSOR_READINESS.md).
+- **Ask Insights** (Studio Agent Framework): a custom agent, *Unstuck Insights*, built with `clientToolRunner`, runs in Studio's AI panel and on the page. It answers questions like "Which customers account for the highest overdue receivables?", "Which payment promises have been missed?", "Which invoices need owner intervention today?" or "What worked?" from the data, naming clients and amounts. It opens the matching report and declines questions it has no report for instead of guessing. With an AI key, Studio's five built-in agents also run, through a server-side adapter for the configured provider. Status and limits: [`qa/AG_STUDIO_SPONSOR_READINESS.md`](qa/AG_STUDIO_SPONSOR_READINESS.md).
 - **Activity log** (AG Grid): every decision and PayPal call, with PayPal debug ids.
 
 ![Ask Insights in AG Studio's AI panel](docs/screenshots/11-insights-studio-agent.png)
@@ -101,13 +101,13 @@ npm run dev
 
 Open <http://localhost:3000>. With no keys, a demo studio with eight stuck invoices loads in **labelled simulation** with **rules-only** AI. No PayPal calls are made.
 
-To connect the PayPal sandbox and Claude:
+To connect the PayPal sandbox and AI:
 
 ```bash
 cp .env.example .env.local
 ```
 
-Set `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` and `ANTHROPIC_API_KEY`. Optionally set `DEMO_PAYER_EMAIL` to a sandbox **Personal account registered outside India**: PayPal won't send invoices to India-based recipients. Then:
+Set `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`, and for AI `GEMINI_API_KEY` (free key from <https://aistudio.google.com/apikey>; Claude is optional via `AI_PROVIDER=anthropic`, see [`docs/AI_PROVIDERS.md`](docs/AI_PROVIDERS.md)). Optionally set `DEMO_PAYER_EMAIL` to a sandbox **Personal account registered outside India**: PayPal won't send invoices to India-based recipients. Then:
 
 ```bash
 npm run check:sandbox
@@ -134,10 +134,11 @@ Full judge walkthrough: [`submission/DEMO_WALKTHROUGH.md`](submission/DEMO_WALKT
 | Command | What it covers | Last result |
 |---|---|---|
 | `npm run lint` | TypeScript strict | ✅ |
-| `npm test` | Unit, flow, agent, **adversarial-model**, reliability (stale approvals, auth, currency) and Insights tests, plus the eval as a safety gate | ✅ 100/100 |
-| `npm run build && npm run test:contract` | Live PayPal code path over HTTP against a strict mock PayPal, with owner auth | ✅ 25/25 (104 API calls) |
+| `npm test` | Unit, flow, agent, **adversarial-model**, reliability (stale approvals, auth, currency), Insights and AI-provider tests (Gemini and Claude adapters with scripted fakes), plus the eval as a safety gate | ✅ 208/208 |
+| `npm run build && npm run test:contract` | Live PayPal code path over HTTP against a strict mock PayPal, with owner auth | ✅ 26/26 (177 calls to the local mock) |
 | `npm run test:e2e` (against `UNSTUCK_MODE=simulation npm start`) | Browser journey incl. the resolution loop, missed promise, client plan, AG Studio questions, the Studio AI panel agent and mobile | ✅ 22/22 (production build) |
-| `npm run eval` | 26-scenario AI evaluation, strict scoring | Rules baseline: 14/26 correct, 12 abstained, 0 forbidden actions, 0 safety violations. **Claude: not yet run** ([report](qa/REAL_AI_EVALUATION_REPORT.md)) |
+| `npm run eval` | 26-scenario AI evaluation, strict scoring, for the configured provider | Rules baseline: 14/26 correct, 12 abstained, 0 forbidden actions, 0 safety violations. **Gemini: not yet run** (needs a key; [report](qa/REAL_AI_EVALUATION_REPORT.md)) |
+| `npm run verify:ai` | 16 labelled checks (real-provider, negative-control, local, safety) against the real AI provider in forced simulation, isolated DB, only the provider host reachable | **Not yet run with a real key** (an invalid-key negative control against the live Gemini API was classified correctly) |
 
 ## Verification status
 
@@ -145,10 +146,10 @@ Full judge walkthrough: [`submission/DEMO_WALKTHROUGH.md`](submission/DEMO_WALKT
 |---|---|
 | Full journey in simulation | ✅ Verified (browser E2E) |
 | Live PayPal code path | ✅ Verified against a strict mock; ⏳ **real sandbox pending.** The build environment cannot reach `api-m.sandbox.paypal.com` and had no credentials |
-| Claude diagnosis and payer assistant | ✅ Pipeline verified with a scripted model; ⏳ **real Claude pending** (no key) |
+| AI diagnosis and payer assistant (Gemini default, Claude optional) | ✅ Pipeline verified with scripted Gemini and Claude models; ⏳ **real Gemini pending** (no key) |
 | Hosted demo | ⏳ Render Blueprint ready; needs the owner's account |
 
-Nothing in this repository claims a real PayPal transaction or a real Claude result until those runs are recorded in `qa/`.
+Nothing in this repository claims a real PayPal transaction or a real AI-provider result until those runs are recorded in `qa/`.
 
 ## Security
 
@@ -161,12 +162,12 @@ Details: [`qa/FINAL_SECURITY_AND_RELIABILITY_REPORT.md`](qa/FINAL_SECURITY_AND_R
 
 ## AI disclosure
 
-- **In the product:** Anthropic Claude (`claude-opus-5-5`, Messages API with structured outputs and tool use) for diagnosis, the payer assistant and, optionally, AG Studio's built-in Insights agents. The *Unstuck Insights* agent uses no LLM.
+- **In the product:** Google Gemini by default (`gemini-3.5-flash-lite` via the `@google/genai` SDK: structured JSON output and function calling), or optionally Anthropic Claude (`AI_PROVIDER=anthropic`), for diagnosis, the payer assistant and, optionally, AG Studio's built-in Insights agents. The *Unstuck Insights* agent uses no LLM.
 - **In development:** the code and documentation were written with Claude Code (an AI coding assistant) under the owner's direction.
 
 ## Stack
 
-Next.js 16 · React 19 · TypeScript · Tailwind CSS 4 · AG Grid 36 · AG Studio 3 · SQLite (better-sqlite3) · Anthropic SDK · PayPal REST (Invoicing v2, Webhooks) · Vitest · Playwright · Render
+Next.js 16 · React 19 · TypeScript · Tailwind CSS 4 · AG Grid 36 · AG Studio 3 · SQLite (better-sqlite3) · Google Gen AI SDK (Gemini) · Anthropic SDK (optional) · PayPal REST (Invoicing v2, Webhooks) · Vitest · Playwright · Render
 
 ## Docs
 

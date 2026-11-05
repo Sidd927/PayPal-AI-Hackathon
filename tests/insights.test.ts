@@ -94,6 +94,7 @@ describe("Claude adapter for AG Studio's built-in agents", () => {
   });
 
   it("translates Studio's turn format to Claude messages and tool calls back", async () => {
+    process.env.AI_PROVIDER = "anthropic";
     process.env.ANTHROPIC_API_KEY = "test";
     let seen: any;
     setAnthropic({
@@ -127,6 +128,7 @@ describe("Claude adapter for AG Studio's built-in agents", () => {
   });
 
   it("rejects cross-origin calls", async () => {
+    process.env.AI_PROVIDER = "anthropic";
     process.env.ANTHROPIC_API_KEY = "test";
     const r = await llm(new Request("http://localhost/api/insights/llm", { method: "POST", headers: { "content-type": "application/json", origin: "https://evil.example", host: "localhost" }, body: "{}" }));
     expect(r.status).toBe(403);

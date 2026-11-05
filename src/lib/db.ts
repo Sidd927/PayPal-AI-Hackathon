@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS diagnoses (
   created_at TEXT NOT NULL,
   ai_status TEXT,
   ai_detail TEXT,
-  ai_attempted_at TEXT
+  ai_attempted_at TEXT,
+  ai_provider TEXT
 );
 CREATE INDEX IF NOT EXISTS diagnoses_invoice ON diagnoses(invoice_id, id);
 CREATE TABLE IF NOT EXISTS actions (
@@ -154,7 +155,7 @@ export function openDb(file: string): DB {
 /** Additive, idempotent column migrations for databases created by earlier versions. */
 function migrate(db: DB) {
   const have = new Set((db.prepare("PRAGMA table_info(diagnoses)").all() as { name: string }[]).map((c) => c.name));
-  for (const col of ["ai_status", "ai_detail", "ai_attempted_at"]) {
+  for (const col of ["ai_status", "ai_detail", "ai_attempted_at", "ai_provider"]) {
     if (!have.has(col)) db.exec(`ALTER TABLE diagnoses ADD COLUMN ${col} TEXT`);
   }
 }
@@ -219,11 +220,13 @@ export type DiagnosisRow = {
   input_hash: string;
   created_at: string;
   /** How the AI took part (AiStatus in ai/diagnosis.ts); null on rows written before this was recorded. */
-  ai_status: "used" | "not_configured" | "budget_exhausted" | "failed" | "unusable" | null;
+  ai_status: "used" | "not_configured" | "budget_exhausted" | "rate_limited" | "failed" | "unusable" | null;
   /** Short reason when the AI wasn't used. */
   ai_detail: string | null;
   /** Last time an AI diagnosis was attempted for these inputs (updated by retries that keep this row). */
   ai_attempted_at: string | null;
+  /** AI provider configured for the diagnosis (gemini, anthropic); null when AI was off or on older rows. */
+  ai_provider: string | null;
 };
 
 export type ActionRow = {
@@ -301,18 +304,18 @@ export const repo = {
   },
 
   /* diagnoses */
-  addDiagnosis(d: Omit<DiagnosisRow, "id" | "created_at" | "ai_attempted_at">) {
+  addDiagnosis(d: Omit<DiagnosisRow, "id" | "created_at" | "ai_attempted_at" | "ai_provider"> & { ai_provider?: string | null }) {
     const now = nowIso();
     const r = getDb()
       .prepare(
-        "INSERT INTO diagnoses (invoice_id, reason, confidence, summary, evidence_json, extracted_json, recommendation_json, source, model, input_hash, created_at, ai_status, ai_detail, ai_attempted_at) VALUES (@invoice_id, @reason, @confidence, @summary, @evidence_json, @extracted_json, @recommendation_json, @source, @model, @input_hash, @created_at, @ai_status, @ai_detail, @ai_attempted_at)",
+        "INSERT INTO diagnoses (invoice_id, reason, confidence, summary, evidence_json, extracted_json, recommendation_json, source, model, input_hash, created_at, ai_status, ai_detail, ai_attempted_at, ai_provider) VALUES (@invoice_id, @reason, @confidence, @summary, @evidence_json, @extracted_json, @recommendation_json, @source, @model, @input_hash, @created_at, @ai_status, @ai_detail, @ai_attempted_at, @ai_provider)",
       )
-      .run({ ...d, created_at: now, ai_attempted_at: d.ai_status === "not_configured" ? null : now });
+      .run({ ai_provider: null, ...d, created_at: now, ai_attempted_at: d.ai_status === "not_configured" ? null : now });
     return Number(r.lastInsertRowid);
   },
   /** Record a failed AI retry on an existing rules diagnosis without replacing it (no new proposals). */
-  recordAiAttempt(diagnosisId: number, ai: { status: DiagnosisRow["ai_status"]; detail: string | null }) {
-    getDb().prepare("UPDATE diagnoses SET ai_status = ?, ai_detail = ?, ai_attempted_at = ? WHERE id = ?").run(ai.status, ai.detail, nowIso(), diagnosisId);
+  recordAiAttempt(diagnosisId: number, ai: { status: DiagnosisRow["ai_status"]; detail: string | null; provider?: string | null }) {
+    getDb().prepare("UPDATE diagnoses SET ai_status = ?, ai_detail = ?, ai_attempted_at = ?, ai_provider = COALESCE(?, ai_provider) WHERE id = ?").run(ai.status, ai.detail, nowIso(), ai.provider ?? null, diagnosisId);
   },
   latestDiagnosis(invoiceId: string) {
     return getDb().prepare("SELECT * FROM diagnoses WHERE invoice_id = ? ORDER BY id DESC LIMIT 1").get(invoiceId) as DiagnosisRow | undefined;

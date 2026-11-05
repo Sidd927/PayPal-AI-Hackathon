@@ -170,6 +170,9 @@ const env = {
   DATABASE_PATH: dbPath,
   APP_BASE_URL: APP,
   UNSTUCK_MODE: "",
+  // No AI in the contract test, whatever .env.local holds: empty values win over .env files in Next.js.
+  AI_PROVIDER: "none",
+  GEMINI_API_KEY: "",
   ANTHROPIC_API_KEY: "",
   OWNER_BASIC_AUTH: "owner:contract-test-only",
 };

@@ -57,6 +57,7 @@ describe("a compromised model cannot move money or widen access", () => {
     freshEnv();
     setGateway(new SimulatedGateway());
     ids = await seedScenario(getGateway(), { refresh: refreshInvoice });
+    process.env.AI_PROVIDER = "anthropic";
     process.env.ANTHROPIC_API_KEY = "test";
   });
 

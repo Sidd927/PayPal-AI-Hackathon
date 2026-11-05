@@ -7,15 +7,15 @@
  * action is then evaluated by the policy engine.
  */
 import { createHash } from "node:crypto";
-import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { ACTION_TYPES, type ProposedAction, STUCK_REASONS, type StuckReason } from "../domain";
 import { addDays, formatDate, isIsoDate } from "../dates";
 import { tryToMinor } from "../money";
 import { buildPlan, type Policy, type PolicyContext, suggestPlans, validatePlan } from "../policy";
-import { consumeAiBudget, FALLBACK_BETA, getAnthropic, quoteUntrusted } from "./anthropic";
-import { readConfig } from "../config";
+import { consumeAiBudget, quoteUntrusted, safeErrorText } from "./shared";
+import { getAiProvider } from "./providers";
+import type { AiCallMeta, AiFinish } from "./providers/types";
+import { type AiProviderId, readConfig } from "../config";
 
 /* ------------------------------------------------------------------ */
 /* Input                                                               */
@@ -140,70 +140,45 @@ function renderInput(input: DiagnosisInput): string {
 
 /**
  * How the AI took part in a diagnosis. Anything other than "used" means the output came from the rules:
- * - not_configured: no API key, or UNSTUCK_AI=off (a genuine rules-only run)
+ * - not_configured: no key for the configured provider, AI turned off, or an unknown AI_PROVIDER (a genuine rules-only run)
  * - budget_exhausted: the daily AI call limit was reached, so no call was made
- * - failed: the request to Claude failed (network, timeout, HTTP error)
- * - unusable: Claude answered but the answer can't be trusted (cut off, declined, or not valid structured output)
+ * - rate_limited: the provider refused for rate or quota reasons (HTTP 429)
+ * - failed: the request didn't complete (auth, model, network, timeout, server error)
+ * - unusable: the provider answered but the answer can't be trusted (cut off, declined, not valid structured output)
  */
-export type AiStatus = "used" | "not_configured" | "budget_exhausted" | "failed" | "unusable";
+export type AiStatus = "used" | "not_configured" | "budget_exhausted" | "rate_limited" | "failed" | "unusable";
 export type DiagnosisResult = {
   output: DiagnosisOutput;
   source: "ai" | "rules";
+  /** Model that produced an AI diagnosis; null for rules. */
   model: string | null;
+  /** Provider that was configured for this attempt (gemini, anthropic), or null when AI was off. */
+  provider: AiProviderId | null;
   ai: AiStatus;
   /** Short, owner-readable reason when AI wasn't used. Never contains request bodies or credentials. */
   error?: string;
-  /** Evidence of the API call, when one was made: Anthropic request id, wall-clock latency, token usage. */
+  /** Evidence of the provider call, when one was made: request id, latency, usage, finish reason. */
   meta?: DiagnosisCallMeta;
 };
-export type DiagnosisCallMeta = {
-  requestId: string | null;
-  latencyMs: number;
-  stopReason?: string | null;
-  usage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number | null; cache_creation_input_tokens: number | null };
-};
+export type DiagnosisCallMeta = AiCallMeta;
 
 /**
- * Output budget for one diagnosis. Claude Opus 5.5 always thinks before answering and thinking tokens count
- * against max_tokens, so the budget must leave room for both; 16k is the recommended non-streaming ceiling
- * (larger values need streaming to stay inside HTTP timeouts). The answer itself is a few hundred tokens.
+ * Output budget for one diagnosis. Reasoning models count thinking against the output budget, so it leaves room
+ * for both; the answer itself is a few hundred tokens. A cut-off answer is detected and rejected, never parsed.
  */
 export const DIAGNOSIS_MAX_TOKENS = 16_000;
-/** Per-request limits: one retry for transient 429/5xx/network errors, then fall back to rules. */
-const DIAGNOSIS_REQUEST_OPTIONS = { timeout: 120_000, maxRetries: 1 } as const;
 
-/** Keep error text short and free of anything that looks like a credential. */
-export function safeErrorText(text: string): string {
-  return text
-    .replace(/sk-ant-[A-Za-z0-9_\-]+/g, "[redacted]")
-    .replace(/(x-api-key|authorization)\s*[:=]\s*\S+/gi, "$1: [redacted]")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 200);
-}
+export { safeErrorText };
 
-function describeApiError(err: unknown): { ai: "failed" | "unusable"; error: string } {
-  if (err instanceof Anthropic.APIConnectionTimeoutError) return { ai: "failed", error: "AI request failed: Claude did not respond in time" };
-  if (err instanceof Anthropic.APIConnectionError) return { ai: "failed", error: "AI request failed: could not reach the Claude API" };
-  if (err instanceof Anthropic.APIError) {
-    const body = err.error as { error?: { type?: string } } | undefined;
-    const type = body?.error?.type;
-    const hint = err.status === 401 ? " (check ANTHROPIC_API_KEY)" : err.status === 404 ? " (check ANTHROPIC_MODEL)" : err.status === 429 ? " (rate limited)" : "";
-    return { ai: "failed", error: safeErrorText(`AI request failed: HTTP ${err.status ?? "?"}${type ? ` ${type}` : ""}${hint}${err.requestID ? `, request id ${err.requestID}` : ""}`) };
-  }
-  return { ai: "failed", error: safeErrorText(`AI request failed: ${(err as Error).message ?? "unknown error"}`) };
-}
-
-/** Classify a completed response. Only a complete, schema-valid answer counts as an AI diagnosis. */
-export function interpretDiagnosisResponse(res: {
-  stop_reason?: string | null;
-  stop_details?: { category?: string | null } | null;
-  content?: { type: string; text?: string }[];
-}): { ok: true; output: DiagnosisOutput } | { ok: false; error: string } {
-  if (res.stop_reason === "refusal") return { ok: false, error: `AI response unusable: Claude declined this request${res.stop_details?.category ? ` (${res.stop_details.category})` : ""}` };
-  if (res.stop_reason === "max_tokens") return { ok: false, error: `AI response unusable: cut off at the ${DIAGNOSIS_MAX_TOKENS.toLocaleString("en-US")}-token output limit` };
-  if (res.stop_reason !== "end_turn") return { ok: false, error: `AI response unusable: unexpected stop reason "${res.stop_reason ?? "none"}"` };
-  const text = (res.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
+/**
+ * Classify a completed provider answer. Only a complete, schema-valid answer counts as an AI diagnosis; the
+ * same rules apply to every provider.
+ */
+export function interpretStructuredAnswer(a: { finish: AiFinish; text: string; finishReason?: string | null; refusalDetail?: string }, providerLabel = "The AI"): { ok: true; output: DiagnosisOutput } | { ok: false; error: string } {
+  if (a.finish === "refused") return { ok: false, error: `AI response unusable: ${providerLabel} declined this request${a.refusalDetail ? ` (${a.refusalDetail})` : ""}` };
+  if (a.finish === "truncated") return { ok: false, error: `AI response unusable: cut off at the ${DIAGNOSIS_MAX_TOKENS.toLocaleString("en-US")}-token output limit` };
+  if (a.finish !== "complete") return { ok: false, error: `AI response unusable: unexpected finish reason "${a.finishReason ?? "none"}"` };
+  const text = a.text ?? "";
   if (!text.trim()) return { ok: false, error: "AI response unusable: no diagnosis in the answer" };
   let json: unknown;
   try {
@@ -219,45 +194,34 @@ export function interpretDiagnosisResponse(res: {
   return { ok: true, output: parsed.data };
 }
 
+/** Back-compat helper for Anthropic-shaped responses (stop_reason + content blocks). */
+export function interpretDiagnosisResponse(res: { stop_reason?: string | null; stop_details?: { category?: string | null } | null; content?: { type: string; text?: string }[] }) {
+  const finish: AiFinish = res.stop_reason === "end_turn" ? "complete" : res.stop_reason === "max_tokens" ? "truncated" : res.stop_reason === "refusal" ? "refused" : "other";
+  const text = (res.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
+  return interpretStructuredAnswer({ finish, text, finishReason: res.stop_reason ?? null, refusalDetail: res.stop_details?.category ?? undefined }, "Claude");
+}
+
 export async function diagnose(input: DiagnosisInput): Promise<DiagnosisResult> {
-  const client = getAnthropic();
-  const cfg = readConfig();
-  const rules = (ai: AiStatus, error?: string): DiagnosisResult => ({ output: diagnoseWithRules(input), source: "rules", model: null, ai, ...(error ? { error } : {}) });
-  if (!client) return rules("not_configured", cfg.ai.unavailableReason === "turned_off" ? "AI is turned off (UNSTUCK_AI=off)" : undefined);
+  const cfg = readConfig().ai;
+  const provider = getAiProvider();
+  const rules = (ai: AiStatus, error?: string, meta?: DiagnosisCallMeta): DiagnosisResult => ({ output: diagnoseWithRules(input), source: "rules", model: null, provider: cfg.configured ? cfg.provider : null, ai, ...(error ? { error } : {}), ...(meta ? { meta } : {}) });
+  if (!provider) {
+    const why = cfg.unavailableReason === "turned_off" ? "AI is turned off (AI_PROVIDER=none or UNSTUCK_AI=off)" : cfg.unavailableReason === "unknown_provider" ? `Unknown AI_PROVIDER ${JSON.stringify(String(process.env.AI_PROVIDER).slice(0, 20))} (use gemini or anthropic)` : undefined;
+    return rules("not_configured", why);
+  }
   if (!consumeAiBudget()) return rules("budget_exhausted", "AI not used: daily AI call limit reached (AI_DAILY_CALL_LIMIT)");
 
-  // Structured output via create() (not parse()): parse() throws on a cut-off answer before stop_reason can be
-  // read, which would make truncation look like a network error. Here we check the stop reason first.
-  const { parse: _sdkParse, ...format } = betaZodOutputFormat(DiagnosisOutput);
-  const t0 = Date.now();
-  let response;
+  let res: Awaited<ReturnType<typeof provider.generateStructured>>;
   try {
-    response = await client.beta.messages.create(
-      {
-        model: cfg.ai.model,
-        max_tokens: DIAGNOSIS_MAX_TOKENS,
-        betas: [FALLBACK_BETA],
-        fallbacks: "default",
-        output_config: { effort: cfg.ai.effort, format },
-        system: [{ type: "text", text: DIAGNOSIS_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
-        messages: [{ role: "user", content: renderInput(input) }],
-      },
-      DIAGNOSIS_REQUEST_OPTIONS,
-    );
-  } catch (err) {
-    const d = describeApiError(err);
-    return { ...rules(d.ai, d.error), meta: { requestId: err instanceof Anthropic.APIError ? (err.requestID ?? null) : null, latencyMs: Date.now() - t0 } };
+    res = await provider.generateStructured({ system: DIAGNOSIS_SYSTEM_PROMPT, user: renderInput(input), schema: DiagnosisOutput, maxOutputTokens: DIAGNOSIS_MAX_TOKENS });
+  } catch (e) {
+    // Adapters return errors as values; this only catches the unexpected, recorded like any other failure.
+    return rules("failed", safeErrorText(`AI request failed: ${(e as Error)?.message ?? "unknown error"}`));
   }
-  const u = response.usage;
-  const meta: DiagnosisCallMeta = {
-    requestId: (response as { _request_id?: string | null })._request_id ?? null,
-    latencyMs: Date.now() - t0,
-    stopReason: response.stop_reason,
-    usage: u ? { input_tokens: u.input_tokens, output_tokens: u.output_tokens, cache_read_input_tokens: u.cache_read_input_tokens ?? null, cache_creation_input_tokens: u.cache_creation_input_tokens ?? null } : undefined,
-  };
-  const verdict = interpretDiagnosisResponse(response as Parameters<typeof interpretDiagnosisResponse>[0]);
-  if (!verdict.ok) return { ...rules("unusable", verdict.error), meta };
-  return { output: sanitize(verdict.output), source: "ai", model: response.model, ai: "used", meta };
+  if (!res.ok) return rules(res.status, res.error, res.meta);
+  const verdict = interpretStructuredAnswer({ finish: res.finish, text: res.text, finishReason: res.meta.finishReason, refusalDetail: res.refusalDetail }, provider.label);
+  if (!verdict.ok) return rules("unusable", verdict.error, res.meta);
+  return { output: sanitize(verdict.output), source: "ai", model: res.meta.model, provider: provider.id, ai: "used", meta: res.meta };
 }
 
 /** Clamp and clean model output; never trust ranges or formats. */

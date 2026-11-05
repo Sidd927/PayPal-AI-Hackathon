@@ -103,7 +103,7 @@ export async function runAgent(trigger: "manual" | "schedule" | "demo" = "manual
     step(null, {
       kind: "done",
       label: `Done: ${sum.autoExecuted} action(s) taken within your rules, ${sum.awaitingApproval} waiting for you`,
-      detail: `${sum.diagnosed} diagnosed, ${sum.unchanged} unchanged, ${sum.followUps} follow-up(s), ${sum.blocked} blocked, ${sum.errors} error(s)${sum.aiFallbacks ? `, ${sum.aiFallbacks} Claude call(s) failed and used rules` : ""}`,
+      detail: `${sum.diagnosed} diagnosed, ${sum.unchanged} unchanged, ${sum.followUps} follow-up(s), ${sum.blocked} blocked, ${sum.errors} error(s)${sum.aiFallbacks ? `, ${sum.aiFallbacks} AI call(s) did not produce a diagnosis and used rules` : ""}`,
       status: sum.errors || sum.aiFallbacks ? "warn" : "ok",
     });
     repo.finishRun(runId, "completed", sum);

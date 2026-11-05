@@ -75,7 +75,10 @@ afterEach(() => {
   delete process.env.AI_DAILY_CALL_LIMIT;
   setAnthropic(null);
 });
-const enableAi = () => (process.env.ANTHROPIC_API_KEY = "test-key");
+const enableAi = () => {
+  process.env.AI_PROVIDER = "anthropic";
+  process.env.ANTHROPIC_API_KEY = "test-key";
+};
 const latest = (k = "northwind") => repo.latestDiagnosis(ids[k]!)!;
 
 describe("refresh: rules-only diagnoses are upgraded once Claude is available", () => {
@@ -206,7 +209,7 @@ describe("explicit handling of failed and unusable answers", () => {
     enableAi();
     process.env.UNSTUCK_AI = "off";
     await diagnoseInvoice(ids.northwind!, { force: true });
-    expect(latest()).toMatchObject({ ai_status: "not_configured", ai_detail: "AI is turned off (UNSTUCK_AI=off)" });
+    expect(latest()).toMatchObject({ ai_status: "not_configured", ai_detail: "AI is turned off (AI_PROVIDER=none or UNSTUCK_AI=off)" });
   });
 });
 
@@ -309,7 +312,7 @@ describe("measurement evidence (Phase 2)", () => {
     await diagnoseInvoice(ids.northwind!);
     const ev = repo.listEvents({ invoiceId: ids.northwind!, limit: 10 }).find((e) => e.kind === "diagnosed")!;
     const data = JSON.parse(ev.data_json!);
-    expect(data).toMatchObject({ ai_status: "used", request_id: "req_success_1", usage: { input_tokens: 1234, output_tokens: 567, cache_creation_input_tokens: 900 } });
+    expect(data).toMatchObject({ ai_status: "used", request_id: "req_success_1", provider: "anthropic", model: "claude-opus-5-5", usage: { input_tokens: 1234, output_tokens: 567, thinking_tokens: null, cached_tokens: 0, cache_write_tokens: 900 } });
     expect(typeof data.latency_ms).toBe("number");
     expect(ev.summary).toMatch(/Claude \(claude-opus-5-5\)/);
   });
@@ -322,17 +325,17 @@ describe("measurement evidence (Phase 2)", () => {
     expect(data).toMatchObject({ ai_status: "failed", source: "rules", request_id: "req_test123" });
   });
 
-  it("eval summary: a mixed run is labelled 'mixed' and Claude-only accuracy excludes the fallbacks", async () => {
+  it("eval summary: a mixed run is labelled 'mixed' and provider-only accuracy excludes the fallbacks", async () => {
     const { summarise } = await import("../eval/harness");
     const base = { category: "core", model: null, reasonOk: true, abstained: false, actionOk: true, forbiddenProposed: [], extractionOk: null, confidence: 0.9, confidenceOk: true, hallucinatedQuotes: [], safetyViolations: [], decisions: [], reason: "forgot", action: "send_reminder" };
     const s = summarise([
-      { ...base, id: "a", source: "ai", ai: "used", reasonStrictOk: true, latencyMs: 4000, usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 80, cache_creation_input_tokens: 0 } },
-      { ...base, id: "b", source: "ai", ai: "used", reasonStrictOk: false, confidence: 0.4, latencyMs: 6000, usage: { input_tokens: 100, output_tokens: 70, cache_read_input_tokens: 80, cache_creation_input_tokens: 0 } },
+      { ...base, id: "a", source: "ai", ai: "used", reasonStrictOk: true, latencyMs: 4000, usage: { input_tokens: 100, output_tokens: 50, thinking_tokens: 20, cached_tokens: 80, cache_write_tokens: 10 } },
+      { ...base, id: "b", source: "ai", ai: "used", reasonStrictOk: false, confidence: 0.4, latencyMs: 6000, usage: { input_tokens: 100, output_tokens: 70, thinking_tokens: null, cached_tokens: 80, cache_write_tokens: 0 } },
       { ...base, id: "c", source: "rules", ai: "failed", reasonStrictOk: true, latencyMs: 30, error: "AI request failed: HTTP 529" },
     ] as never);
     expect(s).toMatchObject({ source: "mixed", aiUsed: 2, aiFallbacks: 1, aiByStatus: { used: 2, failed: 1 } });
-    expect(s.claudeOnly).toMatchObject({ of: 2, reasonCorrectStrict: 1, confidenceBuckets: { "<0.5": 1, ">=0.85": 1 } });
-    expect(s.tokens).toEqual({ calls: 2, input: 200, output: 120, cacheRead: 160, cacheWrite: 0 });
-    expect(s.latencyMs.measured).toBe(3);
+    expect(s.providerOnly).toMatchObject({ of: 2, reasonCorrectStrict: 1, confidenceBuckets: { "<0.5": 1, ">=0.85": 1 } });
+    expect(s.tokens).toEqual({ calls: 2, input: 200, output: 120, thinking: 20, cached: 160, cacheWrite: 10 });
+    expect(s.latencyMs).toMatchObject({ measured: 2, max: 6000 }); // the failed call's 30 ms is not provider latency
   });
 });

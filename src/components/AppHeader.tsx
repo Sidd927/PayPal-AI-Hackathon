@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-type Mode = { paypal: "sandbox" | "simulation" | "misconfigured"; paypalError: string | null; webhookConfigured: boolean; ai: "claude" | "rules"; model: string | null };
+type Mode = { paypal: "sandbox" | "simulation" | "misconfigured"; paypalError: string | null; webhookConfigured: boolean; ai: "gemini" | "anthropic" | "rules"; aiLabel: string | null; aiKeyVariable: string; aiUnavailableReason: string | null; model: string | null };
 
 export function AppHeader({ mode, business, right }: { mode?: Mode; business?: string; right?: React.ReactNode }) {
   const path = usePathname();
@@ -41,9 +41,12 @@ export function AppHeader({ mode, business, right }: { mode?: Mode; business?: s
                 <span aria-hidden className={`size-1.5 rounded-full ${mode.paypal === "sandbox" ? "bg-ok" : "bg-marigold-deep"}`} />
                 {mode.paypal === "sandbox" ? "PayPal sandbox" : mode.paypal === "misconfigured" ? "PayPal misconfigured" : <span>Simulation<span className="hidden sm:inline">, not PayPal</span></span>}
               </span>
-              <span title={mode.model ?? "Set ANTHROPIC_API_KEY to enable Claude"} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 ${mode.ai === "claude" ? "bg-ok-wash text-ok" : "bg-rule/60 text-ink-soft"}`}>
-                <span aria-hidden className={`size-1.5 rounded-full ${mode.ai === "claude" ? "bg-ok" : "bg-ink-faint"}`} />
-                {mode.ai === "claude" ? "Claude" : "Rules only"}
+              <span
+                title={mode.ai !== "rules" ? `AI diagnosis by ${mode.aiLabel} (${mode.model})` : mode.aiUnavailableReason === "turned_off" ? "AI is turned off (AI_PROVIDER=none)" : mode.aiUnavailableReason === "unknown_provider" ? "Unknown AI_PROVIDER: use gemini or anthropic" : `Set ${mode.aiKeyVariable} to enable AI diagnosis`}
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 ${mode.ai !== "rules" ? "bg-ok-wash text-ok" : "bg-rule/60 text-ink-soft"}`}
+              >
+                <span aria-hidden className={`size-1.5 rounded-full ${mode.ai !== "rules" ? "bg-ok" : "bg-ink-faint"}`} />
+                {mode.ai !== "rules" ? `AI: ${mode.aiLabel}` : "Rules only"}
               </span>
             </>
           )}

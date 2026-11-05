@@ -15,7 +15,7 @@ flowchart LR
 `render.yaml` is a Blueprint for a free Node web service.
 
 1. Render dashboard → **New → Blueprint** → select the repo.
-2. Fill the `sync: false` secrets: `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `ANTHROPIC_API_KEY`, `DEMO_PAYER_EMAIL`, `APP_BASE_URL` (the `https://unstuck-xxxx.onrender.com` URL), optionally `OWNER_BASIC_AUTH`.
+2. Fill the `sync: false` secrets: `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `GEMINI_API_KEY` (for Claude instead, add `ANTHROPIC_API_KEY` and set `AI_PROVIDER=anthropic`), `DEMO_PAYER_EMAIL`, `APP_BASE_URL` (the `https://unstuck-xxxx.onrender.com` URL), optionally `OWNER_BASIC_AUTH`.
 3. After the first deploy, run `npm run check:sandbox -- --register-webhook` locally with the same credentials and `APP_BASE_URL`, then set `PAYPAL_WEBHOOK_ID` in Render and redeploy.
 4. Seed once from your machine: `npm run seed:sandbox`. Invoices live in PayPal, so the hosted app picks them up on first load (auto-sync) and re-attaches the demo conversations.
 

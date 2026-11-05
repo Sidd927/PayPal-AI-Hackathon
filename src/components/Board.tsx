@@ -84,8 +84,8 @@ function ReasonCell(p: CustomCellRendererProps<BoardRow>) {
     <div className="flex min-w-0 flex-col leading-tight">
       <ReasonPhrase reason={r.reason} size="sm" />
       {r.confidence !== null && (
-        <span className="mt-0.5 truncate text-xs text-ink-faint" title={`${Math.round(r.confidence * 100)}% confidence, ${describeAiStatus(r.source, r.aiStatus).long}`}>
-          {Math.round(r.confidence * 100)}% sure{r.source === "rules" ? `, ${describeAiStatus(r.source, r.aiStatus).short}` : ""}
+        <span className="mt-0.5 truncate text-xs text-ink-faint" title={`${Math.round(r.confidence * 100)}% confidence, ${describeAiStatus(r.source, r.aiStatus, null, r.aiProvider).long}`}>
+          {Math.round(r.confidence * 100)}% sure, {describeAiStatus(r.source, r.aiStatus, null, r.aiProvider).short}
         </span>
       )}
     </div>

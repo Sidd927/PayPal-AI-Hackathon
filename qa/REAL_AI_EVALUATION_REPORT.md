@@ -1,6 +1,8 @@
 # Real AI Evaluation Report
 
-**Status: the Claude run has NOT been performed.** No `ANTHROPIC_API_KEY` is available in this environment (`api.anthropic.com` is reachable and answers 401 without a key, rechecked 2026-11-04). Every number below comes from the **rules-only fallback**, the deterministic baseline Unstuck uses when no model is configured. None of it is a Claude result, and none of it should be quoted as one.
+**Provider update (Phase 2B, 2026-11-05):** Gemini is now the default AI provider; Claude is optional (`AI_PROVIDER=anthropic`). **No real Gemini run has been performed either**: no `GEMINI_API_KEY` is available here. The only live Gemini traffic was a negative control with a deliberately invalid placeholder key, which the API rejected (HTTP 400 `INVALID_ARGUMENT`) and Unstuck classified as "failed (check GEMINI_API_KEY)". The rules-only baseline was re-run after the migration (`qa/eval/rules-2026-11-05.json`) and is identical to the one below.
+
+**Historical status (Phase 2, Claude): the Claude run has NOT been performed.** No `ANTHROPIC_API_KEY` is available in this environment (`api.anthropic.com` is reachable and answers 401 without a key, rechecked 2026-11-04). Every number below comes from the **rules-only fallback**, the deterministic baseline Unstuck uses when no model is configured. None of it is a Claude result, and none of it should be quoted as one.
 
 ## Method
 
@@ -31,14 +33,25 @@ Failures in the baseline:
 - `conflicting`: a later complaint should override an earlier promise, but the rules abstain and suggest waiting.
 - `manipulated-facts`: a client misstating the total should be escalated or answered with a policy plan; the rules wait instead.
 
-## Claude run: what to do and what to report
+## Provider run (Gemini by default): what to do and what to report
 
-```bash
-export ANTHROPIC_API_KEY=...   # never commit it
-npm run eval                   # ~26 structured-output calls; writes qa/eval/claude-<date>.json
+Put the key in `.env.local` (git-ignored; never commit it), then verify and evaluate:
+
+```
+GEMINI_API_KEY=...
 ```
 
-Report the same table from `summary.byCategory` without editing it, including the denominators and the abstention count. Acceptance bar before the Devpost text may call the diagnosis "evaluated":
+```bash
+npm run verify:ai   # 16 labelled checks, simulation only, PayPal blocked; stops early if the key or model fails; writes qa/ai-verification/verify-ai-gemini-<timestamp>.json
+```
+
+```bash
+npm run eval        # ~26 structured-output calls; writes qa/eval/gemini-<timestamp>.json
+```
+
+For Claude instead, set `AI_PROVIDER=anthropic` and `ANTHROPIC_API_KEY`; files are then named `anthropic-…`. On the Gemini free tier, requests are paced to `GEMINI_MAX_RPM` (default 10/min), so the eval takes about 3 minutes. A 429 is recorded as `rate_limited` and counted as a fallback, never as a model answer.
+
+Report the same table from `summary.byCategory` without editing it, including the denominators and the abstention count. Use `summary.providerOnly` for model accuracy: it excludes every fallback (`summary.aiFallbacks`, `aiByStatus`). If `source` is `mixed`, say so. Acceptance bar before the Devpost text may call the diagnosis "evaluated":
 
 | Measure | Bar |
 |---|---|

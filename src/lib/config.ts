@@ -2,6 +2,44 @@ import { PayPalClient, PAYPAL_SANDBOX_BASE } from "./paypal/client";
 import { type InvoiceGateway, LivePayPalGateway } from "./paypal/gateway";
 import { SimulatedGateway } from "./paypal/simulated";
 
+export type AiProviderId = "gemini" | "anthropic";
+export const AI_PROVIDER_LABEL: Record<AiProviderId, string> = { gemini: "Gemini", anthropic: "Claude" };
+/**
+ * Default Gemini model. Google lists it as a stable (GA) model with structured output and function calling; its
+ * free-tier eligibility and limits could not be confirmed from Google's own pages here, so `npm run verify:ai`
+ * checks it live for your key. Override with GEMINI_MODEL.
+ */
+export const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
+export const DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5";
+
+/**
+ * AI provider selection. Gemini is the default; AI_PROVIDER=anthropic switches to Claude; AI_PROVIDER=none
+ * (or the older UNSTUCK_AI=off) turns AI off. Only the selected provider's key is needed.
+ */
+function aiConfig(env: NodeJS.ProcessEnv) {
+  const raw = (env.AI_PROVIDER || "gemini").trim().toLowerCase();
+  const off = raw === "none" || raw === "off" || env.UNSTUCK_AI === "off";
+  const known = raw === "gemini" || raw === "anthropic";
+  const provider: AiProviderId = raw === "anthropic" ? "anthropic" : "gemini";
+  const key = provider === "gemini" ? env.GEMINI_API_KEY : env.ANTHROPIC_API_KEY;
+  const unavailableReason = off ? ("turned_off" as const) : !known ? ("unknown_provider" as const) : !key ? ("no_key" as const) : null;
+  return {
+    provider,
+    providerLabel: AI_PROVIDER_LABEL[provider],
+    /** The environment variable that holds the selected provider's key (for messages; never the key itself). */
+    keyVariable: provider === "gemini" ? "GEMINI_API_KEY" : "ANTHROPIC_API_KEY",
+    configured: unavailableReason === null,
+    /** Why AI is unavailable, for display: turned off, an unknown AI_PROVIDER value, or no key for the provider. */
+    unavailableReason,
+    model: provider === "gemini" ? env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL : env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL,
+    /** Claude only: output_config.effort. */
+    effort: (env.ANTHROPIC_EFFORT || "medium") as "low" | "medium" | "high",
+    /** Gemini only: client-side requests-per-minute ceiling (free-tier limits are per minute and per day). */
+    geminiMaxRpm: Math.max(1, Number(env.GEMINI_MAX_RPM || 10)),
+    dailyCallLimit: Number(env.AI_DAILY_CALL_LIMIT || 500),
+  };
+}
+
 /** Runtime configuration from environment variables. Secrets never leave the server. */
 export function readConfig() {
   const env = process.env;
@@ -14,14 +52,7 @@ export function readConfig() {
       environment: (env.PAYPAL_ENV ?? "sandbox") as string,
       webhookIdConfigured: !!env.PAYPAL_WEBHOOK_ID,
     },
-    ai: {
-      configured: !!env.ANTHROPIC_API_KEY && env.UNSTUCK_AI !== "off",
-      /** Why AI is unavailable, for display: a key is set but UNSTUCK_AI=off, or no key at all. */
-      unavailableReason: env.UNSTUCK_AI === "off" ? ("turned_off" as const) : !env.ANTHROPIC_API_KEY ? ("no_key" as const) : null,
-      model: env.ANTHROPIC_MODEL || "claude-opus-5-5",
-      effort: (env.ANTHROPIC_EFFORT || "medium") as "low" | "medium" | "high",
-      dailyCallLimit: Number(env.AI_DAILY_CALL_LIMIT || 500),
-    },
+    ai: aiConfig(env),
     appBaseUrl: (env.APP_BASE_URL || "http://localhost:3000").replace(/\/$/, ""),
     demoPayerEmail: env.DEMO_PAYER_EMAIL || "",
     allowDemoReset: env.ALLOW_DEMO_RESET !== "false",

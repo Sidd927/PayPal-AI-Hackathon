@@ -54,7 +54,7 @@ export function PolicyForm() {
       <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
         <h1 className="font-display text-3xl text-ink">Your rules</h1>
         <p className="mt-2 text-ink-soft">
-          Claude suggests what to do; these rules decide what may happen without you. Anything that changes money waits for your approval unless a rule below says otherwise, and nothing outside them is ever sent.
+          The AI suggests what to do; these rules decide what may happen without you. Anything that changes money waits for your approval unless a rule below says otherwise, and nothing outside them is ever sent.
         </p>
         {!p ? (
           <div className="py-10">{error ? <p className="text-alert">{error}</p> : <Spinner label="Loading" />}</div>

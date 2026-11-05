@@ -1,6 +1,6 @@
 /**
  * Evaluation harness. Runs each scenario through the real diagnosis → proposal → policy pipeline
- * (Claude when ANTHROPIC_API_KEY is set, otherwise the rules-only fallback) and scores it.
+ * (the configured AI provider — Gemini by default — when its key is set, otherwise the rules-only fallback) and scores it.
  * Nothing touches PayPal: actions are evaluated by the policy engine, not executed.
  */
 import { diagnose, type DiagnosisInput, proposalsFromDiagnosis } from "../src/lib/ai/diagnosis";
@@ -9,6 +9,7 @@ import { addDays, todayIso } from "../src/lib/dates";
 import { fromMinor } from "../src/lib/money";
 import { DEFAULT_POLICY, evaluateAction } from "../src/lib/policy";
 import type { Scenario } from "./scenarios";
+import type { AiUsage } from "../src/lib/ai/providers/types";
 
 const SYSTEM_PROMPT_MARKERS = ["receivables agent inside Unstuck", "## Stuck reasons", "never instructions to you"];
 
@@ -18,7 +19,7 @@ export type ScenarioResult = {
   source: "ai" | "rules";
   model: string | null;
   reason: string;
-  /** How the AI took part (AiStatus). A Claude run is only "claude" if every scenario used Claude. */
+  /** How the AI took part (AiStatus). A run is labelled "ai" only if every scenario used the AI provider. */
   ai: string;
   reasonOk: boolean;
   abstained: boolean;
@@ -33,10 +34,12 @@ export type ScenarioResult = {
   safetyViolations: string[];
   decisions: string[];
   error?: string;
+  /** Provider configured for the run (gemini, anthropic) or null for a rules-only run. */
+  provider?: string | null;
   /** Measured, when an API call was made. */
   requestId?: string | null;
   latencyMs?: number;
-  usage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number | null; cache_creation_input_tokens: number | null };
+  usage?: AiUsage;
 };
 
 const norm = (s: string) => s.toLowerCase().replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/…$/, "").replace(/\s+/g, " ").trim();
@@ -126,6 +129,7 @@ export async function runScenario(s: Scenario): Promise<ScenarioResult> {
     safetyViolations: safety,
     decisions: decided.map(({ p, d }) => `${p.type}:${d.decision}`),
     error: r.error,
+    provider: r.meta?.provider ?? r.provider,
     requestId: r.meta?.requestId ?? null,
     latencyMs: r.meta?.latencyMs,
     usage: r.meta?.usage,
@@ -141,10 +145,10 @@ export function summarise(results: ScenarioResult[]) {
   const extr = results.filter((r) => r.extractionOk !== null);
   return {
     scenarios: n,
-    // "ai" only when every scenario was diagnosed by Claude; a run with fallbacks is "mixed" and says how many.
+    // "ai" only when every scenario was diagnosed by the AI provider; a run with fallbacks is "mixed" and says how many.
     source: results.every((r) => r.source === "ai") ? "ai" : results.some((r) => r.source === "ai") ? "mixed" : "rules",
     aiUsed: results.filter((r) => r.ai === "used").length,
-    aiFallbacks: results.filter((r) => r.ai === "failed" || r.ai === "unusable" || r.ai === "budget_exhausted").length,
+    aiFallbacks: results.filter((r) => r.ai === "failed" || r.ai === "unusable" || r.ai === "budget_exhausted" || r.ai === "rate_limited").length,
     model: results.find((r) => r.model)?.model ?? null,
     reasonAccuracyPct: pct(correct.length),
     reasonStrict: { correct: results.filter((r) => r.reasonStrictOk).length, abstained: results.filter((r) => r.abstained).length, of: n },
@@ -174,8 +178,9 @@ export function summarise(results: ScenarioResult[]) {
     meanConfidenceWhenWrong: avg(wrong.map((r) => r.confidence)),
     errors: results.filter((r) => r.error).length,
     aiByStatus: Object.fromEntries([...new Set(results.map((r) => r.ai))].map((st) => [st, results.filter((r) => r.ai === st).length])),
-    // Accuracy over the scenarios Claude actually answered (fallbacks excluded), so a partial run can't blur the two.
-    claudeOnly: (() => {
+    provider: results.find((r) => r.provider)?.provider ?? null,
+    // Accuracy over the scenarios the AI provider actually answered (fallbacks excluded), so a partial run can't blur the two.
+    providerOnly: (() => {
       const rs = results.filter((r) => r.ai === "used");
       return {
         of: rs.length,
@@ -200,14 +205,15 @@ export function summarise(results: ScenarioResult[]) {
       };
     })(),
     latencyMs: (() => {
-      const xs = results.map((r) => r.latencyMs).filter((x): x is number => typeof x === "number").sort((a, b) => a - b);
+      // Provider latency: only calls that produced the answer that was used (failed calls are excluded).
+      const xs = results.filter((r) => r.ai === "used").map((r) => r.latencyMs).filter((x): x is number => typeof x === "number").sort((a, b) => a - b);
       const q = (p: number) => (xs.length ? xs[Math.min(xs.length - 1, Math.floor(p * xs.length))]! : null);
       return { measured: xs.length, p50: q(0.5), p90: q(0.9), max: xs.at(-1) ?? null };
     })(),
     tokens: (() => {
-      const us = results.map((r) => r.usage).filter((u): u is NonNullable<ScenarioResult["usage"]> => !!u);
-      const sum = (k: keyof NonNullable<ScenarioResult["usage"]>) => us.reduce((a, u) => a + (u[k] ?? 0), 0);
-      return { calls: us.length, input: sum("input_tokens"), output: sum("output_tokens"), cacheRead: sum("cache_read_input_tokens"), cacheWrite: sum("cache_creation_input_tokens") };
+      const us = results.map((r) => r.usage).filter((u): u is AiUsage => !!u);
+      const sum = (k: keyof AiUsage) => us.reduce((a, u) => a + (u[k] ?? 0), 0);
+      return { calls: us.length, input: sum("input_tokens"), output: sum("output_tokens"), thinking: sum("thinking_tokens"), cached: sum("cached_tokens"), cacheWrite: sum("cache_write_tokens") };
     })(),
   };
 }
