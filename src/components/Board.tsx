@@ -1,5 +1,6 @@
 "use client";
 import { type Ref, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import { describeAiStatus } from "@/lib/ai-status";
 import { AgGridReact, type CustomCellRendererProps } from "ag-grid-react";
 import { AllCommunityModule, type ColDef, type GetRowIdParams, type IRowNode, ModuleRegistry, type RowClassParams, themeQuartz } from "ag-grid-community";
 import type { BoardRow } from "@/lib/services/board";
@@ -82,7 +83,11 @@ function ReasonCell(p: CustomCellRendererProps<BoardRow>) {
   return (
     <div className="flex min-w-0 flex-col leading-tight">
       <ReasonPhrase reason={r.reason} size="sm" />
-      {r.confidence !== null && <span className="mt-0.5 text-xs text-ink-faint">{Math.round(r.confidence * 100)}% sure{r.source === "rules" ? ", rules only" : ""}</span>}
+      {r.confidence !== null && (
+        <span className="mt-0.5 truncate text-xs text-ink-faint" title={`${Math.round(r.confidence * 100)}% confidence, ${describeAiStatus(r.source, r.aiStatus).long}`}>
+          {Math.round(r.confidence * 100)}% sure{r.source === "rules" ? `, ${describeAiStatus(r.source, r.aiStatus).short}` : ""}
+        </span>
+      )}
     </div>
   );
 }

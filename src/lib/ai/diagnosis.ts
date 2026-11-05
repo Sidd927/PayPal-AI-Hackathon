@@ -7,6 +7,7 @@
  * action is then evaluated by the policy engine.
  */
 import { createHash } from "node:crypto";
+import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { ACTION_TYPES, type ProposedAction, STUCK_REASONS, type StuckReason } from "../domain";
@@ -137,30 +138,110 @@ function renderInput(input: DiagnosisInput): string {
 /* AI call                                                             */
 /* ------------------------------------------------------------------ */
 
-export type DiagnosisResult = { output: DiagnosisOutput; source: "ai" | "rules"; model: string | null; error?: string };
+/**
+ * How the AI took part in a diagnosis. Anything other than "used" means the output came from the rules:
+ * - not_configured: no API key, or UNSTUCK_AI=off (a genuine rules-only run)
+ * - budget_exhausted: the daily AI call limit was reached, so no call was made
+ * - failed: the request to Claude failed (network, timeout, HTTP error)
+ * - unusable: Claude answered but the answer can't be trusted (cut off, declined, or not valid structured output)
+ */
+export type AiStatus = "used" | "not_configured" | "budget_exhausted" | "failed" | "unusable";
+export type DiagnosisResult = {
+  output: DiagnosisOutput;
+  source: "ai" | "rules";
+  model: string | null;
+  ai: AiStatus;
+  /** Short, owner-readable reason when AI wasn't used. Never contains request bodies or credentials. */
+  error?: string;
+};
+
+/**
+ * Output budget for one diagnosis. Claude Opus 5.5 always thinks before answering and thinking tokens count
+ * against max_tokens, so the budget must leave room for both; 16k is the recommended non-streaming ceiling
+ * (larger values need streaming to stay inside HTTP timeouts). The answer itself is a few hundred tokens.
+ */
+export const DIAGNOSIS_MAX_TOKENS = 16_000;
+/** Per-request limits: one retry for transient 429/5xx/network errors, then fall back to rules. */
+const DIAGNOSIS_REQUEST_OPTIONS = { timeout: 120_000, maxRetries: 1 } as const;
+
+/** Keep error text short and free of anything that looks like a credential. */
+export function safeErrorText(text: string): string {
+  return text
+    .replace(/sk-ant-[A-Za-z0-9_\-]+/g, "[redacted]")
+    .replace(/(x-api-key|authorization)\s*[:=]\s*\S+/gi, "$1: [redacted]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
+}
+
+function describeApiError(err: unknown): { ai: "failed" | "unusable"; error: string } {
+  if (err instanceof Anthropic.APIConnectionTimeoutError) return { ai: "failed", error: "AI request failed: Claude did not respond in time" };
+  if (err instanceof Anthropic.APIConnectionError) return { ai: "failed", error: "AI request failed: could not reach the Claude API" };
+  if (err instanceof Anthropic.APIError) {
+    const body = err.error as { error?: { type?: string } } | undefined;
+    const type = body?.error?.type;
+    const hint = err.status === 401 ? " (check ANTHROPIC_API_KEY)" : err.status === 404 ? " (check ANTHROPIC_MODEL)" : err.status === 429 ? " (rate limited)" : "";
+    return { ai: "failed", error: safeErrorText(`AI request failed: HTTP ${err.status ?? "?"}${type ? ` ${type}` : ""}${hint}${err.requestID ? `, request id ${err.requestID}` : ""}`) };
+  }
+  return { ai: "failed", error: safeErrorText(`AI request failed: ${(err as Error).message ?? "unknown error"}`) };
+}
+
+/** Classify a completed response. Only a complete, schema-valid answer counts as an AI diagnosis. */
+export function interpretDiagnosisResponse(res: {
+  stop_reason?: string | null;
+  stop_details?: { category?: string | null } | null;
+  content?: { type: string; text?: string }[];
+}): { ok: true; output: DiagnosisOutput } | { ok: false; error: string } {
+  if (res.stop_reason === "refusal") return { ok: false, error: `AI response unusable: Claude declined this request${res.stop_details?.category ? ` (${res.stop_details.category})` : ""}` };
+  if (res.stop_reason === "max_tokens") return { ok: false, error: `AI response unusable: cut off at the ${DIAGNOSIS_MAX_TOKENS.toLocaleString("en-US")}-token output limit` };
+  if (res.stop_reason !== "end_turn") return { ok: false, error: `AI response unusable: unexpected stop reason "${res.stop_reason ?? "none"}"` };
+  const text = (res.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
+  if (!text.trim()) return { ok: false, error: "AI response unusable: no diagnosis in the answer" };
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return { ok: false, error: "AI response unusable: the answer was not valid JSON" };
+  }
+  const parsed = DiagnosisOutput.safeParse(json);
+  if (!parsed.success) {
+    const where = parsed.error.issues.slice(0, 2).map((i) => i.path.join(".") || "(root)").join(", ");
+    return { ok: false, error: `AI response unusable: the answer didn't match the diagnosis schema (${where})` };
+  }
+  return { ok: true, output: parsed.data };
+}
 
 export async function diagnose(input: DiagnosisInput): Promise<DiagnosisResult> {
   const client = getAnthropic();
   const cfg = readConfig();
-  if (!client) return { output: diagnoseWithRules(input), source: "rules", model: null };
-  if (!consumeAiBudget()) return { output: diagnoseWithRules(input), source: "rules", model: null, error: "Daily AI call limit reached" };
+  const rules = (ai: AiStatus, error?: string): DiagnosisResult => ({ output: diagnoseWithRules(input), source: "rules", model: null, ai, ...(error ? { error } : {}) });
+  if (!client) return rules("not_configured", cfg.ai.unavailableReason === "turned_off" ? "AI is turned off (UNSTUCK_AI=off)" : undefined);
+  if (!consumeAiBudget()) return rules("budget_exhausted", "AI not used: daily AI call limit reached (AI_DAILY_CALL_LIMIT)");
+
+  // Structured output via create() (not parse()): parse() throws on a cut-off answer before stop_reason can be
+  // read, which would make truncation look like a network error. Here we check the stop reason first.
+  const { parse: _sdkParse, ...format } = betaZodOutputFormat(DiagnosisOutput);
+  let response;
   try {
-    const response = await client.beta.messages.parse({
-      model: cfg.ai.model,
-      max_tokens: 4000,
-      betas: [FALLBACK_BETA],
-      fallbacks: "default",
-      output_config: { effort: cfg.ai.effort, format: betaZodOutputFormat(DiagnosisOutput) },
-      system: [{ type: "text", text: DIAGNOSIS_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
-      messages: [{ role: "user", content: renderInput(input) }],
-    });
-    if (response.stop_reason === "refusal" || !response.parsed_output) {
-      return { output: diagnoseWithRules(input), source: "rules", model: null, error: `AI returned no usable diagnosis (${response.stop_reason})` };
-    }
-    return { output: sanitize(response.parsed_output), source: "ai", model: response.model };
+    response = await client.beta.messages.create(
+      {
+        model: cfg.ai.model,
+        max_tokens: DIAGNOSIS_MAX_TOKENS,
+        betas: [FALLBACK_BETA],
+        fallbacks: "default",
+        output_config: { effort: cfg.ai.effort, format },
+        system: [{ type: "text", text: DIAGNOSIS_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+        messages: [{ role: "user", content: renderInput(input) }],
+      },
+      DIAGNOSIS_REQUEST_OPTIONS,
+    );
   } catch (err) {
-    return { output: diagnoseWithRules(input), source: "rules", model: null, error: `AI call failed: ${(err as Error).message}` };
+    const d = describeApiError(err);
+    return rules(d.ai, d.error);
   }
+  const verdict = interpretDiagnosisResponse(response as Parameters<typeof interpretDiagnosisResponse>[0]);
+  if (!verdict.ok) return rules("unusable", verdict.error);
+  return { output: sanitize(verdict.output), source: "ai", model: response.model, ai: "used" };
 }
 
 /** Clamp and clean model output; never trust ranges or formats. */

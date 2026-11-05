@@ -23,14 +23,14 @@ import { boardRows } from "./board";
 
 const g = globalThis as unknown as { __unstuckRunning?: string };
 
-export type RunSummary = { invoices: number; diagnosed: number; unchanged: number; autoExecuted: number; awaitingApproval: number; blocked: number; followUps: number; errors: number };
+export type RunSummary = { invoices: number; diagnosed: number; unchanged: number; autoExecuted: number; awaitingApproval: number; blocked: number; followUps: number; errors: number; aiFallbacks?: number };
 
 export async function runAgent(trigger: "manual" | "schedule" | "demo" = "manual", opts: { force?: boolean } = {}) {
   if (g.__unstuckRunning) return { runId: g.__unstuckRunning, alreadyRunning: true as const };
   const runId = repo.startRun(trigger);
   g.__unstuckRunning = runId;
   const step = (invoice_id: string | null, s: Parameters<typeof repo.addStep>[1]) => repo.addStep(runId, { ...s, invoice_id });
-  const sum: RunSummary = { invoices: 0, diagnosed: 0, unchanged: 0, autoExecuted: 0, awaitingApproval: 0, blocked: 0, followUps: 0, errors: 0 };
+  const sum: RunSummary = { invoices: 0, diagnosed: 0, unchanged: 0, autoExecuted: 0, awaitingApproval: 0, blocked: 0, followUps: 0, errors: 0, aiFallbacks: 0 };
   const today = todayIso();
 
   try {
@@ -79,14 +79,16 @@ export async function runAgent(trigger: "manual" | "schedule" | "demo" = "manual
         continue; // An active plan is the remedy; don't re-diagnose underneath it.
       }
 
-      // 2b. Missed promise → force a fresh diagnosis with that fact in context.
+      // 2b. Missed promise. The diagnosis input includes it, so the input hash changes the moment a promise is
+      //     missed and the invoice is re-diagnosed then; forcing it on every later run would just repeat the call.
       const promise = promiseState(inv.id, today);
-      const forced = opts.force || promise.promise_missed;
+      const forced = opts.force;
       if (promise.promise_missed) step(inv.id, { kind: "follow_up", label: `Promise to pay by ${formatDate(promise.promised_by)} was missed`, status: "warn" });
 
       // 3. Gather → diagnose → plan → rules → act
       try {
         const res = await diagnoseInvoice(inv.id, { force: forced, onStep: (s) => step(inv.id, s) });
+        if ("aiFallback" in res && res.aiFallback) sum.aiFallbacks = (sum.aiFallbacks ?? 0) + 1;
         if (res.skipped) sum.unchanged++;
         else {
           sum.diagnosed++;
@@ -101,8 +103,8 @@ export async function runAgent(trigger: "manual" | "schedule" | "demo" = "manual
     step(null, {
       kind: "done",
       label: `Done: ${sum.autoExecuted} action(s) taken within your rules, ${sum.awaitingApproval} waiting for you`,
-      detail: `${sum.diagnosed} diagnosed, ${sum.unchanged} unchanged, ${sum.followUps} follow-up(s), ${sum.blocked} blocked, ${sum.errors} error(s)`,
-      status: sum.errors ? "warn" : "ok",
+      detail: `${sum.diagnosed} diagnosed, ${sum.unchanged} unchanged, ${sum.followUps} follow-up(s), ${sum.blocked} blocked, ${sum.errors} error(s)${sum.aiFallbacks ? `, ${sum.aiFallbacks} Claude call(s) failed and used rules` : ""}`,
+      status: sum.errors || sum.aiFallbacks ? "warn" : "ok",
     });
     repo.finishRun(runId, "completed", sum);
     repo.logEvent({ kind: "agent_run", actor: "unstuck", summary: `Agent run: ${sum.autoExecuted} automatic, ${sum.awaitingApproval} for approval, ${sum.diagnosed} diagnosed`, data: { run_id: runId, ...sum } });

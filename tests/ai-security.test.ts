@@ -35,7 +35,7 @@ const base = {
   tone: "neutral",
 };
 function compromisedModel(output: Record<string, unknown>) {
-  return { beta: { messages: { parse: async () => ({ stop_reason: "end_turn", model: "claude-opus-5-5", parsed_output: { ...base, ...output } }) } } } as unknown as Anthropic;
+  return { beta: { messages: { create: async () => ({ stop_reason: "end_turn", model: "claude-opus-5-5", content: [{ type: "text", text: JSON.stringify({ ...base, ...output }) }] }) } } } as unknown as Anthropic;
 }
 
 describe("eval harness (rules-only) as a regression gate", () => {

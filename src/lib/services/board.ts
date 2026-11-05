@@ -28,6 +28,8 @@ export type BoardRow = {
   confidence: number | null;
   summary: string | null;
   source: "ai" | "rules" | null;
+  /** How the AI took part in the latest diagnosis (see AiStatus); null for older rows or no diagnosis. */
+  aiStatus: DiagnosisRow["ai_status"];
   next: { id: string; type: ActionType; label: string; status: string; decision: string } | null;
   pendingCount: number;
   plan: { paidCount: number; count: number; nextDue: string | null } | null;
@@ -84,6 +86,9 @@ function parseDiagnosis(d: DiagnosisRow | undefined) {
     },
     source: d.source,
     model: d.model,
+    ai_status: d.ai_status,
+    ai_detail: d.ai_detail,
+    ai_attempted_at: d.ai_attempted_at,
     created_at: d.created_at,
   };
 }
@@ -136,6 +141,7 @@ function boardRow(inv: InvoiceRow, today: string): BoardRow {
     confidence: d?.confidence ?? null,
     summary: d?.summary ?? null,
     source: d?.source ?? null,
+    aiStatus: d?.ai_status ?? null,
     next: primary ? { id: primary.id, type: primary.type, label: ACTION_META[primary.type].label, status: primary.status, decision: primary.decision } : null,
     pendingCount: actions.filter((a) => a.status === "proposed").length,
     plan: prog ? { paidCount: prog.rows.filter((r) => r.state === "paid").length, count: prog.rows.length, nextDue: prog.next?.due_date ?? null } : null,

@@ -141,7 +141,12 @@ describe("simulation end-to-end (rules-only AI)", () => {
 
 function fakeClaude(script: { parse?: (p: any) => any; create?: (p: any, n: number) => any }) {
   let n = 0;
-  return { beta: { messages: { parse: async (p: any) => script.parse!(p), create: async (p: any) => script.create!(p, n++) } } } as unknown as Anthropic;
+  // Diagnosis scripts describe the parsed answer; the app calls create() and parses the text itself.
+  const asCreate = (p: any) => {
+    const r = script.parse!(p);
+    return { stop_reason: r.stop_reason, model: r.model, content: [{ type: "text", text: JSON.stringify(r.parsed_output) }] };
+  };
+  return { beta: { messages: { create: async (p: any) => (script.create ? script.create(p, n++) : asCreate(p)) } } } as unknown as Anthropic;
 }
 
 describe("AI diagnosis is validated and policy-bounded", () => {
@@ -162,8 +167,12 @@ describe("AI diagnosis is validated and policy-bounded", () => {
               summary: "Priya wants to split the payment.",
               evidence: [{ source: "client_message", quote: "Could I pay $400 now" }],
               extracted: { po_number: null, new_contact_email: "not-an-email", promised_date: "soon", proposed_first_payment: "400.00", disputed_item: null },
+              inference: "None",
               recommended_action: "offer_payment_plan",
               rationale: "Client offered $400 now.",
+              expected_outcome: "First installment arrives this week.",
+              risks: [],
+              alternatives: [],
               message: { subject: "A plan for invoice JC-1043", body: "Hi Priya, no problem at all." },
               plan: { installment_count: 9, first_payment: "400.00" }, // above policy max → clamped to 3
               discount_percent: null,

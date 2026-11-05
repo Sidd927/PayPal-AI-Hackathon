@@ -1,10 +1,64 @@
-import { repo } from "../db";
+import { type DiagnosisRow, repo } from "../db";
+import { readConfig } from "../config";
 import { ACTION_META, isOpenStatus } from "../domain";
-import { diagnose, hashInput, proposalsFromDiagnosis } from "../ai/diagnosis";
+import { diagnose, type DiagnosisResult, hashInput, proposalsFromDiagnosis } from "../ai/diagnosis";
 import { buildDiagnosisInput, policyContextFor, resolutionUrl } from "./invoices";
 import { proposeAction } from "./actions";
 
 export type StepFn = (s: { kind: string; label: string; detail?: string; status: "ok" | "info" | "warn" | "error" | "skip" }) => void;
+
+/** A failed or unusable AI attempt is retried for unchanged inputs only after this long (avoids hammering the API). */
+export const AI_RETRY_COOLDOWN_MS = 30 * 60_000;
+
+/**
+ * Should the latest diagnosis be reused, or should we diagnose again?
+ * - force, or inputs changed: diagnose again.
+ * - A Claude diagnosis with unchanged inputs: reuse (no API call).
+ * - A rules diagnosis with unchanged inputs: reuse while AI is unavailable; once AI is available, retry with AI
+ *   (rules-only because unconfigured: retry now; daily limit hit: retry on a new day; failed/unusable: retry after
+ *   a cooldown). `aiRetry` means "only a better (AI) answer is worth replacing the current one".
+ */
+export function reuseDecision(
+  latest: Pick<DiagnosisRow, "source" | "input_hash" | "ai_status" | "ai_attempted_at" | "created_at"> | undefined,
+  inputHash: string,
+  opts: { force?: boolean; aiConfigured: boolean; now?: number },
+): { reuse: true; why: string } | { reuse: false; aiRetry: boolean; why: string } {
+  if (opts.force) return { reuse: false, aiRetry: false, why: "Diagnosing again on request" };
+  if (!latest || latest.input_hash !== inputHash) return { reuse: false, aiRetry: false, why: latest ? "Something changed since the last diagnosis" : "First diagnosis" };
+  if (latest.source === "ai") return { reuse: true, why: "Nothing new since the last Claude diagnosis" };
+  if (!opts.aiConfigured) return { reuse: true, why: "Nothing new since the last diagnosis" };
+  const now = opts.now ?? Date.now();
+  const attempted = Date.parse(latest.ai_attempted_at ?? latest.created_at);
+  switch (latest.ai_status) {
+    case null:
+    case "not_configured":
+      return { reuse: false, aiRetry: true, why: "Claude is now available; upgrading the rules-only diagnosis" };
+    case "budget_exhausted":
+      return new Date(now).toISOString().slice(0, 10) !== new Date(attempted).toISOString().slice(0, 10)
+        ? { reuse: false, aiRetry: true, why: "New day: retrying with Claude" }
+        : { reuse: true, why: "Daily AI limit was reached; keeping the rules diagnosis until tomorrow" };
+    case "failed":
+    case "unusable":
+      return now - attempted >= AI_RETRY_COOLDOWN_MS
+        ? { reuse: false, aiRetry: true, why: "Retrying Claude after an earlier failure" }
+        : { reuse: true, why: "Claude failed recently; keeping the rules diagnosis for now" };
+    default:
+      return { reuse: true, why: "Nothing new since the last diagnosis" };
+  }
+}
+
+/** One line describing who produced a diagnosis, for traces and Activity. */
+export function aiLine(r: Pick<DiagnosisResult, "source" | "model" | "ai" | "error">): string {
+  if (r.source === "ai") return `Claude (${r.model})`;
+  switch (r.ai) {
+    case "not_configured":
+      return r.error ? `Rules only: ${r.error}` : "Rules only: AI not configured";
+    case "budget_exhausted":
+      return "Rules fallback: daily AI limit reached";
+    default:
+      return `Rules fallback. ${r.error ?? "AI not used"}`;
+  }
+}
 
 export async function diagnoseInvoice(invoiceId: string, opts: { force?: boolean; onStep?: StepFn } = {}) {
   const step: StepFn = opts.onStep ?? (() => {});
@@ -16,18 +70,31 @@ export async function diagnoseInvoice(invoiceId: string, opts: { force?: boolean
   const inputHash = hashInput(input);
   const latest = repo.latestDiagnosis(invoiceId);
   step({ kind: "gather", label: "Gathered evidence", detail: `${input.messages.length} message(s), ${input.history.previous_invoices} past invoice(s), ${input.reminders.sent} reminder(s)${input.commitments.promise_missed ? ", missed promise" : ""}`, status: "info" });
-  if (!opts.force && latest && latest.input_hash === inputHash) {
-    step({ kind: "diagnose", label: "Nothing new since last diagnosis", detail: `Still “${latest.reason.replace("_", " ")}”`, status: "skip" });
-    return { skipped: true as const, reason: "Nothing changed since the last diagnosis", diagnosisId: latest.id };
+  const decision = reuseDecision(latest, inputHash, { force: opts.force, aiConfigured: readConfig().ai.configured });
+  if (decision.reuse) {
+    step({ kind: "diagnose", label: decision.why, detail: `Still “${latest!.reason.replace("_", " ")}”`, status: "skip" });
+    return { skipped: true as const, reason: decision.why, diagnosisId: latest!.id };
   }
 
   const t0 = Date.now();
   const result = await diagnose(input);
+  const took = `${((Date.now() - t0) / 1000).toFixed(1)}s`;
+  const bad = result.ai === "failed" || result.ai === "unusable" || result.ai === "budget_exhausted";
+
+  // An AI retry for unchanged inputs only matters if Claude answered. Otherwise keep the existing diagnosis and
+  // its pending actions untouched (no churn, no re-proposed actions) and just record the attempt.
+  if (decision.aiRetry && result.source !== "ai" && latest) {
+    repo.recordAiAttempt(latest.id, { status: result.ai, detail: result.error ?? null });
+    step({ kind: "diagnose", label: "Kept the previous diagnosis", detail: `${aiLine(result)} (${took})`, status: bad ? "warn" : "skip" });
+    if (bad) repo.logEvent({ invoice_id: invoiceId, kind: "ai_retry_failed", actor: "ai", summary: `Claude couldn't re-diagnose this invoice; kept the earlier rules diagnosis. ${result.error ?? ""}`.trim(), data: { diagnosis_id: latest.id, ai_status: result.ai } });
+    return { skipped: true as const, reason: "AI retry did not produce a diagnosis", diagnosisId: latest.id, aiFallback: bad };
+  }
+
   step({
     kind: "diagnose",
     label: `Diagnosed: ${result.output.reason.replace("_", " ")} (${Math.round(result.output.confidence * 100)}%)`,
-    detail: `${result.source === "ai" ? `Claude (${result.model})` : "Rules only"} in ${((Date.now() - t0) / 1000).toFixed(1)}s${result.error ? `. ${result.error}` : ""}`,
-    status: result.error ? "warn" : "ok",
+    detail: `${aiLine(result)} in ${took}`,
+    status: bad ? "warn" : "ok",
   });
   const o = result.output;
   const diagnosisId = repo.addDiagnosis({
@@ -41,13 +108,15 @@ export async function diagnoseInvoice(invoiceId: string, opts: { force?: boolean
     source: result.source,
     model: result.model,
     input_hash: inputHash,
+    ai_status: result.ai,
+    ai_detail: result.error ?? null,
   });
   repo.logEvent({
     invoice_id: invoiceId,
     kind: "diagnosed",
     actor: result.source === "ai" ? "ai" : "rules",
-    summary: `Diagnosed as “${o.reason.replace("_", " ")}” (${Math.round(o.confidence * 100)}% confidence)${result.error ? `. ${result.error}` : ""}`,
-    data: { diagnosis_id: diagnosisId, model: result.model, source: result.source, error: result.error },
+    summary: `Diagnosed as “${o.reason.replace("_", " ")}” (${Math.round(o.confidence * 100)}% confidence). ${aiLine(result)}`,
+    data: { diagnosis_id: diagnosisId, model: result.model, source: result.source, ai_status: result.ai, error: result.error },
   });
   if (o.reason === "dispute") repo.setDisputed(invoiceId, true);
   else if (row.disputed && o.reason !== "unknown") repo.setDisputed(invoiceId, false);
@@ -67,7 +136,7 @@ export async function diagnoseInvoice(invoiceId: string, opts: { force?: boolean
       step({ kind: "act", label: r?.summary ?? "Executed", detail: r?.receipts?.map((x) => `${x.simulated ? "simulated " : ""}${x.operation} → ${x.status}`).join("; "), status: "ok" });
     } else if (a.status === "failed") step({ kind: "act", label: "PayPal call failed", detail: a.error ?? "", status: "error" });
   }
-  return { skipped: false as const, diagnosisId, source: result.source, error: result.error, actions };
+  return { skipped: false as const, diagnosisId, source: result.source, ai: result.ai, error: result.error, aiFallback: bad, actions };
 }
 
 export async function diagnoseAll(opts: { force?: boolean } = {}) {

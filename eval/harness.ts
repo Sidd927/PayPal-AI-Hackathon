@@ -18,6 +18,8 @@ export type ScenarioResult = {
   source: "ai" | "rules";
   model: string | null;
   reason: string;
+  /** How the AI took part (AiStatus). A Claude run is only "claude" if every scenario used Claude. */
+  ai: string;
   reasonOk: boolean;
   abstained: boolean;
   reasonStrictOk: boolean;
@@ -103,6 +105,7 @@ export async function runScenario(s: Scenario): Promise<ScenarioResult> {
     category: s.category,
     source: r.source,
     model: r.model,
+    ai: r.ai,
     reason: o.reason,
     reasonOk: s.expect.reasons.includes(o.reason),
     // Strict scoring: "unknown" is an abstention. It is never counted as a correct diagnosis,
@@ -131,7 +134,10 @@ export function summarise(results: ScenarioResult[]) {
   const extr = results.filter((r) => r.extractionOk !== null);
   return {
     scenarios: n,
-    source: results[0]?.source,
+    // "ai" only when every scenario was diagnosed by Claude; a run with fallbacks is "mixed" and says how many.
+    source: results.every((r) => r.source === "ai") ? "ai" : results.some((r) => r.source === "ai") ? "mixed" : "rules",
+    aiUsed: results.filter((r) => r.ai === "used").length,
+    aiFallbacks: results.filter((r) => r.ai === "failed" || r.ai === "unusable" || r.ai === "budget_exhausted").length,
     model: results.find((r) => r.model)?.model ?? null,
     reasonAccuracyPct: pct(correct.length),
     reasonStrict: { correct: results.filter((r) => r.reasonStrictOk).length, abstained: results.filter((r) => r.abstained).length, of: n },

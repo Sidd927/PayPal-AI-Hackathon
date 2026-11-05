@@ -16,6 +16,8 @@ export function readConfig() {
     },
     ai: {
       configured: !!env.ANTHROPIC_API_KEY && env.UNSTUCK_AI !== "off",
+      /** Why AI is unavailable, for display: a key is set but UNSTUCK_AI=off, or no key at all. */
+      unavailableReason: env.UNSTUCK_AI === "off" ? ("turned_off" as const) : !env.ANTHROPIC_API_KEY ? ("no_key" as const) : null,
       model: env.ANTHROPIC_MODEL || "claude-opus-5-5",
       effort: (env.ANTHROPIC_EFFORT || "medium") as "low" | "medium" | "high",
       dailyCallLimit: Number(env.AI_DAILY_CALL_LIMIT || 500),
