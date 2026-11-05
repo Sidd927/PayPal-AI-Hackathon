@@ -220,6 +220,24 @@ export function canRecordSeedPayment(s: SeedInvoice, inv: PPInvoice): string | n
   return null;
 }
 
+const shortHash = (text: string) => createHash("sha256").update(text.toLowerCase()).digest("hex").slice(0, 12);
+
+/**
+ * Before any write, confirm on a freshly fetched invoice that it is still this scenario's invoice:
+ * same number (JC-<n>), USD, the scenario's line-item total, and the scenario's client business.
+ */
+export function seedIdentityProblem(s: SeedInvoice, inv: PPInvoice): string | null {
+  const m = NUMBER_RE.exec((inv.detail?.invoice_number ?? "").trim());
+  if (!m || Number(m[1]) !== s.number) return `Invoice ${inv.id} is ${inv.detail?.invoice_number ?? "unnumbered"}, not JC-${s.number}; not touching it.`;
+  if (inv.detail.currency_code !== "USD") return `Invoice ${inv.id} is in ${inv.detail.currency_code}, not USD; not touching it.`;
+  const items = (inv.items ?? []) as { quantity?: string; unit_amount?: { value?: string } }[];
+  const itemsTotal = items.reduce((a, i) => a + Math.round(Number(i.quantity ?? "1") * toMinor(i.unit_amount?.value ?? "0")), 0);
+  if (itemsTotal !== totalMinorOf(s)) return `Invoice ${inv.id} line items total ${fromMinor(itemsTotal)}, not ${fromMinor(totalMinorOf(s))}; not touching it.`;
+  const business = inv.primary_recipients?.[0]?.billing_info?.business_name;
+  if (business !== undefined && business !== s.recipient.business) return `Invoice ${inv.id} is for ${business}, not ${s.recipient.business}; not touching it.`;
+  return null;
+}
+
 /**
  * Decide what to do for one scenario, given the invoices already in PayPal with its number (full details).
  * Pure: no I/O. Never plans to send an invoice that is not a DRAFT, and never plans a second create.
@@ -314,17 +332,28 @@ export async function seedScenarioWithReport(
           id = (await createDraftWithDateFallback(gw, s, desiredRecipientEmail(s, opts.payerEmail), runId, log)).id;
           out.invoiceId = id;
         } else if (step === "update-recipient") {
+          // Fresh read: must still be this scenario's DRAFT. Only the first recipient's email changes; the PUT
+          // carries every other field back unchanged (full replacement), and doesn't notify anyone.
           const inv = await gw.getInvoice(id!);
           if (inv.status !== "DRAFT") throw new Error(`Invoice ${id} is ${inv.status}, no longer a draft; not readdressing it.`);
+          const problem = seedIdentityProblem(s, inv);
+          if (problem) throw new Error(problem);
           const email = desiredRecipientEmail(s, opts.payerEmail);
           const body = buildInvoiceUpdateBody(inv, (b) => {
-            b.primary_recipients = [{ ...(b.primary_recipients?.[0] ?? {}), billing_info: { ...(b.primary_recipients?.[0]?.billing_info ?? {}), email_address: email } }];
+            const [first, ...rest] = b.primary_recipients ?? [];
+            b.primary_recipients = [{ ...(first ?? {}), billing_info: { ...(first?.billing_info ?? {}), email_address: email } }, ...rest];
           });
-          await gw.updateInvoice(id!, body, { requestId: `seed-recipient-${id}-${createHash("sha256").update(email.toLowerCase()).digest("hex").slice(0, 12)}`, sendToRecipient: false });
+          await gw.updateInvoice(id!, body, { requestId: `seed-recipient-${id}-${shortHash(email)}`, sendToRecipient: false });
         } else if (step === "send") {
+          // Fresh read: still a DRAFT, still this scenario's invoice, and addressed to the intended recipient.
           const inv = await gw.getInvoice(id!);
           if (inv.status !== "DRAFT") throw new Error(`Invoice ${id} is already ${inv.status}; not sending it again.`);
-          await gw.sendInvoice(id!, `seed-send-${id}`);
+          const problem = seedIdentityProblem(s, inv);
+          if (problem) throw new Error(problem);
+          const want = desiredRecipientEmail(s, opts.payerEmail).toLowerCase();
+          if (recipientEmailOf(inv) !== want) throw new Error(`Invoice ${id} is addressed to ${recipientEmailOf(inv) || "nobody"}, not ${want}; not sending it.`);
+          // The key includes the recipient, so a send retried after readdressing never reuses a cached earlier failure.
+          await gw.sendInvoice(id!, `seed-send-${id}-${shortHash(want)}`);
         } else if (step === "record-payment") {
           const inv = await gw.getInvoice(id!);
           const refusal = canRecordSeedPayment(s, inv);

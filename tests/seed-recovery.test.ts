@@ -353,3 +353,189 @@ describe("regression: discovery sees the existing Bluebird draft (JC-1043-KH5S)"
     expect(writesIn(f)).toHaveLength(0);
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Review of the real draft update: request shape, ordering, retries,   */
+/* and guards, through the live gateway against a stateful fake PayPal. */
+/* ------------------------------------------------------------------ */
+const BLUEBIRD_ID = "INV2-WGM3-AQMX-YL5E-ZC96";
+
+/** A realistic GET representation of the existing Bluebird DRAFT (richer than what the seeder set). */
+function bluebirdDraft() {
+  return {
+    id: BLUEBIRD_ID,
+    status: "DRAFT",
+    detail: {
+      invoice_number: "JC-1043-KH5S",
+      currency_code: "USD",
+      note: "Thank you for working with Juniper & Co. Studio.",
+      memo: "private memo",
+      invoice_date: "2026-09-27",
+      payment_term: { term_type: "DUE_ON_DATE_SPECIFIED", due_date: "2026-10-27" },
+      metadata: { create_time: "2026-11-05T10:00:00Z", created_by: "sb-merchant", last_update_time: "2026-11-05T10:00:00Z", invoicer_view_url: "https://www.sandbox.paypal.com/invoice/details/x" },
+    },
+    invoicer: { business_name: "Juniper & Co. Studio", email_address: "sb-merchant@business.example", name: { given_name: "Maya", surname: "Okafor" } },
+    primary_recipients: [
+      {
+        billing_info: { business_name: "Bluebird Café", name: { given_name: "Priya", surname: "Shah", full_name: "Priya Shah" }, email_address: IN_BUYER, language: "en_US" },
+        shipping_info: { name: { given_name: "Priya", surname: "Shah" } },
+      },
+    ],
+    items: [
+      { name: "Menu redesign (3 menus)", description: "Breakfast, lunch and dinner menus", quantity: "1", unit_amount: { currency_code: "USD", value: "850.00" }, unit_of_measure: "AMOUNT", tax: { name: "Sales tax", percent: "0" } },
+      { name: "Window signage artwork", quantity: "1", unit_amount: { currency_code: "USD", value: "350.00" }, unit_of_measure: "AMOUNT" },
+    ],
+    configuration: { allow_tip: false, partial_payment: { allow_partial_payment: false }, tax_calculated_after_discount: true, tax_inclusive: false },
+    amount: { currency_code: "USD", value: "1200.00", breakdown: { item_total: { currency_code: "USD", value: "1200.00" }, tax_total: { currency_code: "USD", value: "0.00" } } },
+    due_amount: { currency_code: "USD", value: "1200.00" },
+    links: [{ href: `${BASE}/v2/invoicing/invoices/${BLUEBIRD_ID}`, rel: "self", method: "GET" }],
+  };
+}
+
+type FakeOpts = { putStatus?: number; ignoreRecipientChange?: boolean; bluebirdOverride?: Record<string, unknown> };
+/** Stateful fake: the six other observed invoices, the Bluebird draft, create/send for new ones. Records everything. */
+function statefulSandbox(opts: FakeOpts = {}) {
+  const store = new Map<string, Record<string, unknown>>();
+  for (const o of OBSERVED.filter((x) => x.key !== "bluebird")) store.set(o.id, fullInvoice(o) as unknown as Record<string, unknown>);
+  store.set(BLUEBIRD_ID, { ...bluebirdDraft(), ...(opts.bluebirdOverride ?? {}) });
+  let seq = 0;
+  const f = fakeFetch((r) => {
+    const p = r.url.pathname;
+    if (p === "/v1/oauth2/token") return { status: 200, body: { access_token: "T", token_type: "Bearer", expires_in: 3600 } };
+    if (r.method === "GET" && p === "/v2/invoicing/invoices") {
+      const items = [...store.values()].map((i) => ({ id: i.id, status: i.status, detail: { invoice_number: (i.detail as { invoice_number: string }).invoice_number, currency_code: "USD" } }));
+      return { status: 200, body: { items, total_items: items.length, total_pages: 1 } };
+    }
+    if (r.method === "POST" && p === "/v2/invoicing/invoices") {
+      const id = `INV2-NEW-${++seq}`;
+      const b = r.body as Record<string, unknown>;
+      store.set(id, { ...b, id, status: "DRAFT" });
+      return { status: 201, body: { id } };
+    }
+    const m = /^\/v2\/invoicing\/invoices\/([^/]+)(\/[a-z-]+)?$/.exec(p);
+    const inv = m ? store.get(decodeURIComponent(m[1]!)) : undefined;
+    if (!m || !inv) return { status: 404, body: { name: "RESOURCE_NOT_FOUND" } };
+    if (r.method === "GET" && !m[2]) return { status: 200, body: inv };
+    if (r.method === "PUT" && !m[2]) {
+      if (opts.putStatus) return { status: opts.putStatus, body: { name: "UNPROCESSABLE_ENTITY", details: [{ issue: "TEST_FAILURE" }] } };
+      const b = r.body as Record<string, unknown>;
+      const next: Record<string, unknown> = { ...b, id: inv.id, status: inv.status, links: inv.links, detail: { ...(b.detail as object), metadata: (inv.detail as { metadata?: unknown }).metadata } };
+      if (opts.ignoreRecipientChange) next.primary_recipients = inv.primary_recipients;
+      store.set(inv.id as string, next);
+      return { status: 200, body: next };
+    }
+    if (r.method === "POST" && m[2] === "/send") {
+      const email = (inv.primary_recipients as { billing_info: { email_address: string } }[])[0]!.billing_info.email_address;
+      if (email === IN_BUYER) return { status: 406, body: { name: "MEDIA_TYPE_NOT_ACCEPTABLE", details: [{ issue: "INR_FOREIGN_CURRENCY_BLOCKED" }] } };
+      inv.status = "SENT";
+      return { status: 200, body: {} };
+    }
+    return { status: 500, body: { name: "UNEXPECTED_IN_TEST", path: p } };
+  });
+  return { f, store };
+}
+const fastGateway = (f: ReturnType<typeof fakeFetch>) => new LivePayPalGateway(new PayPalClient({ clientId: "id", clientSecret: "secret", baseUrl: BASE, fetchImpl: f.impl, sleep: async () => {} }), "sandbox", undefined);
+const noRefresh = { refresh: async () => {} };
+const bluebirdCalls = (f: ReturnType<typeof fakeFetch>) => f.calls.filter((c) => c.url.pathname.includes(BLUEBIRD_ID)).map((c) => `${c.method} ${c.url.pathname.replace(`/v2/invoicing/invoices/${BLUEBIRD_ID}`, "")||"/"}`);
+
+describe("review: updating the real Bluebird draft", () => {
+  it("PUTs a full replacement to the right endpoint, identical to the draft except the recipient email, then sends", async () => {
+    const { f, store } = statefulSandbox();
+    const { outcomes } = await seedScenarioWithReport(fastGateway(f), { payerEmail: INTL, ...noRefresh });
+    expect(outcomes.find((o) => o.key === "bluebird")).toMatchObject({ result: "resumed", invoiceId: BLUEBIRD_ID, status: "SENT" });
+
+    const put = f.calls.find((c) => c.method === "PUT")!;
+    expect(f.calls.filter((c) => c.method === "PUT")).toHaveLength(1);
+    expect(put.url.pathname).toBe(`/v2/invoicing/invoices/${BLUEBIRD_ID}`);
+    expect(Object.fromEntries(put.url.searchParams)).toEqual({ send_to_recipient: "false", send_to_invoicer: "false" });
+    expect(put.headers.get("PayPal-Request-Id")).toMatch(/^seed-recipient-INV2-WGM3-AQMX-YL5E-ZC96-[0-9a-f]{12}$/);
+    expect(put.headers.get("PayPal-Request-Id")).not.toContain("@"); // no email in headers
+
+    // Expected body, written out by hand: the draft minus read-only fields, with only the email changed.
+    const d = bluebirdDraft();
+    const expected = {
+      detail: { invoice_number: "JC-1043-KH5S", currency_code: "USD", note: d.detail.note, memo: d.detail.memo, invoice_date: "2026-09-27", payment_term: { term_type: "DUE_ON_DATE_SPECIFIED", due_date: "2026-10-27" } },
+      invoicer: d.invoicer,
+      primary_recipients: [{ billing_info: { ...d.primary_recipients[0]!.billing_info, email_address: INTL }, shipping_info: d.primary_recipients[0]!.shipping_info }],
+      items: d.items,
+      configuration: d.configuration,
+    };
+    expect(put.body).toEqual(expected);
+
+    // Order on this invoice: discovery read → fresh read → PUT → fresh read → send → status read.
+    expect(bluebirdCalls(f)).toEqual(["GET /", "GET /", "PUT /", "GET /", "POST /send", "GET /"]);
+    const send = f.calls.find((c) => c.method === "POST" && c.url.pathname.endsWith(`${BLUEBIRD_ID}/send`))!;
+    expect(send.body).toEqual({ send_to_recipient: true, send_to_invoicer: false });
+    expect(send.headers.get("PayPal-Request-Id")).toMatch(/^seed-send-INV2-WGM3-AQMX-YL5E-ZC96-[0-9a-f]{12}$/);
+    expect(f.calls.findIndex((c) => c === send)).toBeGreaterThan(f.calls.findIndex((c) => c === put));
+
+    // No write reached any of the six existing invoices.
+    const existing = OBSERVED.filter((x) => x.key !== "bluebird").map((x) => x.id);
+    expect(f.calls.filter((c) => c.method !== "GET" && existing.some((id) => c.url.pathname.includes(id)))).toHaveLength(0);
+    expect((store.get(BLUEBIRD_ID)!.primary_recipients as { billing_info: { email_address: string } }[])[0]!.billing_info.email_address).toBe(INTL);
+  });
+
+  it("a failed PUT never sends, leaves the draft untouched, and the next run plans the same safe retry", async () => {
+    const { f, store } = statefulSandbox({ putStatus: 422 });
+    const { outcomes } = await seedScenarioWithReport(fastGateway(f), { payerEmail: INTL, ...noRefresh });
+    const bb = outcomes.find((o) => o.key === "bluebird")!;
+    expect(bb.result).toBe("failed");
+    expect(f.calls.some((c) => c.url.pathname.endsWith(`${BLUEBIRD_ID}/send`))).toBe(false);
+    expect(store.get(BLUEBIRD_ID)).toMatchObject({ status: "DRAFT", primary_recipients: bluebirdDraft().primary_recipients });
+
+    const again = await seedScenarioWithReport(fastGateway(statefulSandbox().f), { payerEmail: INTL, ...noRefresh, dryRun: true });
+    expect(again.outcomes.find((o) => o.key === "bluebird")).toMatchObject({ invoiceId: BLUEBIRD_ID, steps: ["update-recipient", "send"] });
+  });
+
+  it("a 5xx on PUT is retried with the same idempotency key and the same body; still sent only once", async () => {
+    const inner = statefulSandbox();
+    const failedPuts: { headers: Headers; body: unknown }[] = [];
+    let failures = 1;
+    const impl = (async (input: string | URL | Request, init?: RequestInit) => {
+      if ((init?.method ?? "GET") === "PUT" && failures-- > 0) {
+        failedPuts.push({ headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) });
+        return new Response(JSON.stringify({ name: "SERVICE_UNAVAILABLE" }), { status: 503, headers: { "content-type": "application/json" } });
+      }
+      return inner.f.impl(input, init);
+    }) as typeof fetch;
+    const { outcomes } = await seedScenarioWithReport(fastGateway({ impl, calls: [] }), { payerEmail: INTL, ...noRefresh });
+    expect(outcomes.find((o) => o.key === "bluebird")!.result).toBe("resumed");
+    const retried = inner.f.calls.filter((c) => c.method === "PUT");
+    expect(failedPuts).toHaveLength(1);
+    expect(retried).toHaveLength(1);
+    expect(failedPuts[0]!.headers.get("PayPal-Request-Id")).toBe(retried[0]!.headers.get("PayPal-Request-Id"));
+    expect(failedPuts[0]!.body).toEqual(retried[0]!.body);
+    expect(inner.f.calls.filter((c) => c.url.pathname.endsWith(`${BLUEBIRD_ID}/send`))).toHaveLength(1);
+  });
+
+  it("does not PUT if, at execution time, the draft was already sent or is a different invoice", async () => {
+    for (const bluebirdOverride of [
+      { status: "SENT" },
+      { detail: { ...bluebirdDraft().detail, invoice_number: "JC-1099-ZZZZ" } },
+      { items: [{ name: "Something else", quantity: "1", unit_amount: { currency_code: "USD", value: "99.00" } }] },
+      { primary_recipients: [{ billing_info: { business_name: "Another Client", email_address: IN_BUYER } }] },
+    ]) {
+      // Discovery sees the normal draft; the override applies only to reads made after planning.
+      const { f, store } = statefulSandbox();
+      const gw2 = fastGateway(f);
+      const orig = gw2.getInvoice.bind(gw2);
+      let reads = 0;
+      gw2.getInvoice = async (id: string) => {
+        if (id === BLUEBIRD_ID && ++reads > 1) store.set(BLUEBIRD_ID, { ...bluebirdDraft(), ...bluebirdOverride });
+        return orig(id);
+      };
+      const { outcomes } = await seedScenarioWithReport(gw2, { payerEmail: INTL, ...noRefresh });
+      expect(outcomes.find((o) => o.key === "bluebird")!.result).toBe("failed");
+      expect(f.calls.filter((c) => c.method !== "GET" && c.url.pathname.includes(BLUEBIRD_ID))).toHaveLength(0);
+    }
+  });
+
+  it("does not send if PayPal didn't apply the new recipient", async () => {
+    const { f } = statefulSandbox({ ignoreRecipientChange: true });
+    const { outcomes } = await seedScenarioWithReport(fastGateway(f), { payerEmail: INTL, ...noRefresh });
+    const bb = outcomes.find((o) => o.key === "bluebird")!;
+    expect(bb.result).toBe("failed");
+    expect(bb.detail).toMatch(/not sending it/);
+    expect(f.calls.some((c) => c.url.pathname.endsWith(`${BLUEBIRD_ID}/send`))).toBe(false);
+  });
+});
