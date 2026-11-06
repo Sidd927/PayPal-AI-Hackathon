@@ -87,7 +87,7 @@ describe("agent run (simulation, rules-only)", () => {
     await payerAcceptOffer(row, turn.offerIds.at(-1)!);
     const run = runView((await runAgent("manual")).runId)!;
     const step = run.steps.find((s) => s.kind === "follow_up" && s.invoice_id === ids.bluebird);
-    expect(step?.label).toMatch(/Installment 1 reminder (sent via PayPal|waiting)/);
+    expect(step?.label).toMatch(/Installment 1 reminder (sent through PayPal|recorded \(simulation\)|waiting)/);
     expect(run.steps.some((s) => s.kind === "diagnose" && s.invoice_id === ids.bluebird)).toBe(false); // plan is the remedy
   });
 

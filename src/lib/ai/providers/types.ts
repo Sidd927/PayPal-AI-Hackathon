@@ -4,6 +4,7 @@
  */
 import type { z } from "zod";
 import type { AiProviderId } from "../../config";
+import type { AiErrorKind } from "../reliability";
 
 /** Normalised token usage. Fields a provider doesn't report are null. */
 /** cached_tokens = prompt tokens read from cache; cache_write_tokens = tokens written to cache (Claude only; null for Gemini). */
@@ -20,6 +21,14 @@ export type AiCallMeta = {
   usage?: AiUsage;
   /** Gemini only: whether the response schema was enforced by the API or only by our validation. */
   schemaMode?: "api_schema" | "json_only";
+  /** HTTP attempts made for this call (retries included; 0 if none was sent, e.g. circuit open or budget). */
+  attempts?: number;
+  /** Wall-clock time including retries, backoff and pacing waits. `latencyMs` is the final attempt only. */
+  totalMs?: number;
+  /** Classification of the failure (absent on success). */
+  errorKind?: AiErrorKind;
+  /** HTTP status of the final failed attempt, if any. */
+  httpStatus?: number;
 };
 
 /** How a completed answer ended, normalised across providers. */
@@ -27,8 +36,11 @@ export type AiFinish = "complete" | "truncated" | "refused" | "other";
 
 /** Failure classes shared by every provider. */
 export type AiFailure = {
-  /** failed: request didn't complete (auth, model, network, timeout, server). rate_limited: 429 / quota. */
-  status: "failed" | "rate_limited";
+  /**
+   * failed: the request didn't complete (auth, model, network, timeout, server, provider paused).
+   * rate_limited: 429 / quota. budget_exhausted: AI_DAILY_CALL_LIMIT reached, nothing was sent.
+   */
+  status: "failed" | "rate_limited" | "budget_exhausted";
   /** Short, owner-readable, credential-free. */
   error: string;
   meta?: AiCallMeta;

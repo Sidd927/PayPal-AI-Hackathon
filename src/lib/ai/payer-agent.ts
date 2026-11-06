@@ -11,7 +11,7 @@ import { type InvoiceRow, repo } from "../db";
 import type { Installment } from "../domain";
 import { formatMoney, tryToMinor } from "../money";
 import { buildPlan, type Policy, type PolicyContext, suggestPlans, validatePlan } from "../policy";
-import { consumeAiBudget, quoteUntrusted, safeErrorText } from "./shared";
+import { quoteUntrusted, safeErrorText } from "./shared";
 import { getAiProvider } from "./providers";
 import type { ChatItem, ToolSpec } from "./providers/types";
 import { z } from "zod";
@@ -171,7 +171,7 @@ export function runPayerTool(name: string, input: Record<string, unknown>, ctx: 
 export async function payerTurn(row: InvoiceRow, policy: Policy, pctx: PolicyContext): Promise<PayerTurnResult> {
   const ctx: ToolCtx = { row, policy, pctx, offerIds: [], escalated: false };
   const provider = getAiProvider();
-  if (!provider || !consumeAiBudget()) return rulesTurn(ctx, provider ? "Daily AI call limit reached" : undefined);
+  if (!provider) return rulesTurn(ctx);
 
   const facts = {
     business: policy.businessName,
@@ -208,9 +208,10 @@ export async function payerTurn(row: InvoiceRow, policy: Policy, pctx: PolicyCon
 
 async function toolLoop(provider: NonNullable<ReturnType<typeof getAiProvider>>, system: string[], items: ChatItem[], ctx: ToolCtx): Promise<PayerTurnResult> {
   for (let i = 0; i < 5; i++) {
-    // Every provider call counts against the daily limit (the first was charged by payerTurn).
-    if (i > 0 && !consumeAiBudget()) break;
+    // Every HTTP attempt is charged to the daily limit by the provider's retry runner.
     const res = await provider.chatTurn({ system, items, tools, maxOutputTokens: 2000, effort: "low" });
+    // Limit reached mid-conversation: stop and keep what the tools already produced (offers stay valid).
+    if (!res.ok && res.status === "budget_exhausted" && i > 0) break;
     if (!res.ok) return rulesTurn(ctx, res.error);
     if (res.finish === "refused") return rulesTurn(ctx, `${provider.label} declined this request`);
     if (res.finish !== "tool_use" || res.toolCalls.length === 0) {

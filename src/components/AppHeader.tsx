@@ -2,10 +2,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-type Mode = { paypal: "sandbox" | "simulation" | "misconfigured"; paypalError: string | null; webhookConfigured: boolean; ai: "gemini" | "anthropic" | "rules"; aiLabel: string | null; aiKeyVariable: string; aiUnavailableReason: string | null; model: string | null };
+type Mode = { paypal: "sandbox" | "simulation" | "misconfigured"; paypalError: string | null; webhookConfigured: boolean; ai: "gemini" | "anthropic" | "rules"; aiLabel: string | null; aiKeyVariable: string; aiUnavailableReason: string | null; model: string | null; aiPausedUntil?: number | null; aiPausedReason?: string | null };
 
 export function AppHeader({ mode, business, right }: { mode?: Mode; business?: string; right?: React.ReactNode }) {
   const path = usePathname();
+  const paused = !!mode && mode.ai !== "rules" && !!mode.aiPausedUntil && mode.aiPausedUntil > Date.now();
   const nav = [
     { href: "/", label: "Receivables" },
     { href: "/insights", label: "Insights" },
@@ -42,11 +43,11 @@ export function AppHeader({ mode, business, right }: { mode?: Mode; business?: s
                 {mode.paypal === "sandbox" ? "PayPal sandbox" : mode.paypal === "misconfigured" ? "PayPal misconfigured" : <span>Simulation<span className="hidden sm:inline">, not PayPal</span></span>}
               </span>
               <span
-                title={mode.ai !== "rules" ? `AI diagnosis by ${mode.aiLabel} (${mode.model})` : mode.aiUnavailableReason === "turned_off" ? "AI is turned off (AI_PROVIDER=none)" : mode.aiUnavailableReason === "unknown_provider" ? "Unknown AI_PROVIDER: use gemini or anthropic" : `Set ${mode.aiKeyVariable} to enable AI diagnosis`}
-                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 ${mode.ai !== "rules" ? "bg-ok-wash text-ok" : "bg-rule/60 text-ink-soft"}`}
+                title={paused ? `${mode.aiLabel} calls are paused until ${new Date(mode.aiPausedUntil!).toLocaleTimeString()} (${mode.aiPausedReason}). Diagnoses use the rules until then.` : mode.ai !== "rules" ? `AI diagnosis by ${mode.aiLabel} (${mode.model})` : mode.aiUnavailableReason === "turned_off" ? "AI is turned off (AI_PROVIDER=none)" : mode.aiUnavailableReason === "unknown_provider" ? "Unknown AI_PROVIDER: use gemini or anthropic" : `Set ${mode.aiKeyVariable} to enable AI diagnosis`}
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 ${paused ? "bg-marigold-wash text-marigold-deep" : mode.ai !== "rules" ? "bg-ok-wash text-ok" : "bg-rule/60 text-ink-soft"}`}
               >
-                <span aria-hidden className={`size-1.5 rounded-full ${mode.ai !== "rules" ? "bg-ok" : "bg-ink-faint"}`} />
-                {mode.ai !== "rules" ? `AI: ${mode.aiLabel}` : "Rules only"}
+                <span aria-hidden className={`size-1.5 rounded-full ${paused ? "bg-marigold-deep" : mode.ai !== "rules" ? "bg-ok" : "bg-ink-faint"}`} />
+                {paused ? `AI: ${mode.aiLabel} paused` : mode.ai !== "rules" ? `AI: ${mode.aiLabel}` : "Rules only"}
               </span>
             </>
           )}

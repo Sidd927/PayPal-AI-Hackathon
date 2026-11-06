@@ -165,15 +165,15 @@ export function Board({
 
   const columnDefs = useMemo<ColDef<BoardRow>[]>(
     () => [
-      { headerName: "Client", field: "client", cellRenderer: ClientCell, flex: 1.5, minWidth: 190, getQuickFilterText: (p) => `${p.data?.client} ${p.data?.number} ${p.data?.contact} ${p.data?.email}` },
-      { headerName: "Owed", field: "dueMinor", cellRenderer: AmountCell, width: 140, type: "rightAligned", sort: undefined },
+      { headerName: "Client", field: "client", cellRenderer: ClientCell, flex: 1.5, minWidth: 160, getQuickFilterText: (p) => `${p.data?.client} ${p.data?.number} ${p.data?.contact} ${p.data?.email}` },
+      { headerName: "Owed", field: "dueMinor", cellRenderer: AmountCell, width: 112, type: "rightAligned", sort: undefined },
       {
         headerName: "Timing",
         colId: "timing",
         // Open invoices first (most overdue at the top); settled invoices sink to the bottom.
         valueGetter: (p) => (p.data && p.data.open ? p.data.daysOverdue : -100_000),
         cellRenderer: AgeCell,
-        width: 140,
+        width: 118,
         sortingOrder: ["desc", "asc"],
       },
       {
@@ -181,13 +181,13 @@ export function Board({
         colId: "risk",
         valueGetter: (p) => (p.data && p.data.open ? p.data.risk.score : -1),
         cellRenderer: RiskCell,
-        width: 118,
+        width: 112,
         sort: "desc",
         sortingOrder: ["desc", "asc"],
         headerTooltip: "Transparent heuristic: hover a badge to see every factor and its points",
       },
-      { headerName: "Why it's stuck", field: "reason", cellRenderer: ReasonCell, flex: 1.4, minWidth: 200, getQuickFilterText: (p) => p.data?.summary ?? "", tooltipField: "summary" },
-      { headerName: "Next step", colId: "next", cellRenderer: NextCell, flex: 1.2, minWidth: 180, sortable: false },
+      { headerName: "Why it's stuck", field: "reason", cellRenderer: ReasonCell, flex: 1.4, minWidth: 170, getQuickFilterText: (p) => p.data?.summary ?? "", tooltipField: "summary" },
+      { headerName: "Next step", colId: "next", cellRenderer: NextCell, flex: 1.2, minWidth: 150, sortable: false },
     ],
     [],
   );

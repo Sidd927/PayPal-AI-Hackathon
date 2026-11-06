@@ -72,7 +72,7 @@ export async function runAgent(trigger: "manual" | "schedule" | "demo" = "manual
           });
           sum.followUps++;
           tally(a.decision, a.status);
-          step(inv.id, { kind: "follow_up", label: `Installment ${idx} reminder ${a.status === "executed" ? "sent via PayPal" : a.decision === "approve" ? "waiting for your approval" : "blocked"}`, detail: a.reasons.join("; "), status: a.status === "executed" ? "ok" : "info" });
+          step(inv.id, { kind: "follow_up", label: `Installment ${idx} reminder ${a.status === "executed" ? (getGateway().mode === "live" ? "sent through PayPal" : "recorded (simulation)") : a.decision === "approve" ? "waiting for your approval" : "blocked"}`, detail: a.reasons.join("; "), status: a.status === "executed" ? "ok" : "info" });
         } else {
           step(inv.id, { kind: "follow_up", label: `Plan ${prog.rows.filter((x) => x.state === "paid").length}/${prog.rows.length} paid, nothing due`, status: "skip" });
         }

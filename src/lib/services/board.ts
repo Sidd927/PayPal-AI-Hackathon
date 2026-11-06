@@ -1,5 +1,6 @@
 /** Read models for the owner console. */
 import { todayIso } from "../dates";
+import { breakerState } from "../ai/reliability";
 import { type DiagnosisRow, type InvoiceRow, repo } from "../db";
 import { ACTION_META, type ActionType, isOpenStatus, type StuckReason } from "../domain";
 import { getGateway, readConfig, resolutionUrl } from "../config";
@@ -202,6 +203,9 @@ export function modeInfo() {
     aiKeyVariable: cfg.ai.keyVariable,
     aiUnavailableReason: cfg.ai.unavailableReason,
     model: cfg.ai.configured ? cfg.ai.model : null,
+    // Set while the provider is paused by the circuit breaker (repeated 503s or an exhausted daily quota).
+    aiPausedUntil: cfg.ai.configured ? breakerState(cfg.ai.provider).until : null,
+    aiPausedReason: cfg.ai.configured ? breakerState(cfg.ai.provider).reason : null,
   };
 }
 

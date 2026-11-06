@@ -199,7 +199,7 @@ export function InvoiceDrawer({ id, onClose, onChanged, version }: { id: string;
                     {describeAiStatus(d.diagnosis.source, d.diagnosis.ai_status, null, d.diagnosis.ai_provider).problem && (
                       <p role="status" className="mt-2 rounded-[var(--radius-tight)] bg-marigold-wash px-3 py-1.5 text-xs text-ink">
                         <span className="font-medium">{describeAiStatus(d.diagnosis.source, d.diagnosis.ai_status, null, d.diagnosis.ai_provider).badge}.</span>{" "}
-                        {(d.diagnosis.ai_detail ?? "The AI wasn't used for this diagnosis").replace(/\.?$/, ".")} This diagnosis comes from the built-in rules.{" "}
+                        {(d.diagnosis.ai_detail ?? "The AI wasn't used for this diagnosis").replace(/^AI (request failed|rate limited|response unusable|request not sent|not used): /, "").replace(/^\w/, (c) => c.toUpperCase()).replace(/\.?$/, ".")} This diagnosis comes from the built-in rules.{" "}
                         <span className="text-ink-soft">Use “Diagnose again” to retry with {providerLabel(d.diagnosis.ai_provider) === "AI" ? "the AI" : providerLabel(d.diagnosis.ai_provider)}.</span>
                       </p>
                     )}

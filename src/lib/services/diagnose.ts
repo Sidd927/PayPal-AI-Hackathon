@@ -4,6 +4,8 @@ import { ACTION_META, isOpenStatus } from "../domain";
 import { diagnose, type DiagnosisResult, hashInput, proposalsFromDiagnosis } from "../ai/diagnosis";
 import { buildDiagnosisInput, policyContextFor, resolutionUrl } from "./invoices";
 import { proposeAction } from "./actions";
+import { withLock } from "../locks";
+import { NOT_SENT_PREFIX } from "../ai/reliability";
 
 export type StepFn = (s: { kind: string; label: string; detail?: string; status: "ok" | "info" | "warn" | "error" | "skip" }) => void;
 
@@ -19,7 +21,7 @@ export const AI_RETRY_COOLDOWN_MS = 30 * 60_000;
  *   a cooldown). `aiRetry` means "only a better (AI) answer is worth replacing the current one".
  */
 export function reuseDecision(
-  latest: Pick<DiagnosisRow, "source" | "input_hash" | "ai_status" | "ai_attempted_at" | "created_at"> | undefined,
+  latest: Pick<DiagnosisRow, "source" | "input_hash" | "ai_status" | "ai_attempted_at" | "created_at"> & { ai_detail?: string | null } | undefined,
   inputHash: string,
   opts: { force?: boolean; aiConfigured: boolean; now?: number },
 ): { reuse: true; why: string } | { reuse: false; aiRetry: boolean; why: string } {
@@ -40,6 +42,9 @@ export function reuseDecision(
     case "failed":
     case "unusable":
     case "rate_limited":
+      // Nothing was sent (provider paused, or our own queue was full): no request to back off from, so the next run
+      // may try again. While the pause lasts that retry fails at once, sending and charging nothing.
+      if (latest.ai_detail?.startsWith(NOT_SENT_PREFIX)) return { reuse: false, aiRetry: true, why: "Retrying AI: the last attempt was never sent" };
       return now - attempted >= AI_RETRY_COOLDOWN_MS
         ? { reuse: false, aiRetry: true, why: "Retrying AI after an earlier failure" }
         : { reuse: true, why: latest.ai_status === "rate_limited" ? "AI was rate limited recently; keeping the rules diagnosis for now" : "AI failed recently; keeping the rules diagnosis for now" };
@@ -64,12 +69,38 @@ export function aiLine(r: Pick<DiagnosisResult, "source" | "model" | "ai" | "err
   }
 }
 
-/** Provider evidence kept on Activity events: provider, model, request id, latency, usage. No content, no keys. */
+/**
+ * Provider evidence kept on Activity events: provider, model, request id, latency of the final attempt, total time
+ * including retries and waits, attempts, usage, and (on failure) the error class and HTTP status. No content, no keys.
+ */
 function evidenceData(r: DiagnosisResult) {
-  return { provider: r.meta?.provider ?? r.provider, model: r.meta?.model ?? r.model, request_id: r.meta?.requestId ?? null, latency_ms: r.meta?.latencyMs ?? null, usage: r.meta?.usage ?? null, finish_reason: r.meta?.finishReason ?? null };
+  const m = r.meta;
+  return {
+    provider: m?.provider ?? r.provider,
+    model: m?.model ?? r.model,
+    request_id: m?.requestId ?? null,
+    latency_ms: m?.latencyMs ?? null,
+    total_ms: m?.totalMs ?? null,
+    attempts: m?.attempts ?? null,
+    usage: m?.usage ?? null,
+    finish_reason: m?.finishReason ?? null,
+    // Gemini: "api_schema" when the API enforced the response schema, "json_only" when it rejected the schema and
+    // Unstuck fell back to plain JSON (still validated by Unstuck's own schema).
+    schema_mode: m?.schemaMode ?? null,
+    ...(m?.errorKind ? { error_kind: m.errorKind, http_status: m.httpStatus ?? null } : {}),
+  };
 }
 
-export async function diagnoseInvoice(invoiceId: string, opts: { force?: boolean; onStep?: StepFn } = {}) {
+/**
+ * Diagnose one invoice. Calls for the same invoice run one at a time (agent run, "Diagnose all" and "Diagnose
+ * again" can overlap): a second caller waits, then sees the first one's result (reused unless forced), instead of
+ * making a duplicate AI call and proposing (and possibly auto-executing) the same action twice.
+ */
+export function diagnoseInvoice(invoiceId: string, opts: { force?: boolean; onStep?: StepFn } = {}) {
+  return withLock(`diagnose:${invoiceId}`, () => diagnoseInvoiceUnlocked(invoiceId, opts));
+}
+
+async function diagnoseInvoiceUnlocked(invoiceId: string, opts: { force?: boolean; onStep?: StepFn }) {
   const step: StepFn = opts.onStep ?? (() => {});
   const row = repo.getInvoice(invoiceId);
   if (!row) throw new Error("Invoice not found");

@@ -2,6 +2,7 @@ import { openDb, setDb } from "@/lib/db";
 import { setAnthropic } from "@/lib/ai/anthropic";
 import { setGeminiClient } from "@/lib/ai/providers/gemini";
 import { resetPacing } from "@/lib/ai/shared";
+import { resetBreakers, setRetryTiming } from "@/lib/ai/reliability";
 
 /** Fresh in-memory database + simulation gateway + no AI (rules-only) for each test. */
 export function freshEnv() {
@@ -18,6 +19,10 @@ export function freshEnv() {
   setAnthropic(null);
   setGeminiClient(null);
   resetPacing();
+  // Retries and breakers are provider-wide state: reset them, and don't actually sleep between retries in tests
+  // (tests that check the delays install their own recorder).
+  resetBreakers();
+  setRetryTiming({ sleep: async () => {}, random: () => 1 });
 }
 
 /** A scripted fetch for PayPal contract tests. Records every request. */

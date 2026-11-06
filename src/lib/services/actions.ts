@@ -5,7 +5,8 @@
  * PayPal-Request-Id so retries (or double clicks) are idempotent at PayPal too.
  */
 import { formatDate, todayIso } from "../dates";
-import { type ActionRow, newId, repo } from "../db";
+import { withLock } from "../locks";
+import { type ActionRow, type InvoiceRow, newId, repo } from "../db";
 import { ACTION_META, type ActionType, type Installment, type PolicyDecision, type ProposedAction, parseActionParams } from "../domain";
 import { formatMoney, fromMinor } from "../money";
 import { getGateway } from "../config";
@@ -26,7 +27,16 @@ export function viewAction(a: ActionRow): ActionView {
   };
 }
 
-export async function proposeAction(invoiceId: string, proposed: ProposedAction, opts: { diagnosisId?: number | null; executeIfAuto?: boolean } = {}) {
+/**
+ * Propose an action: policy decides auto / approve / block, and an auto action runs at once. Serialised per invoice
+ * (evaluate → record → execute), so two overlapping proposals can't both pass a rule like the reminder cadence
+ * before either has been recorded, which would send the client two reminders.
+ */
+export function proposeAction(invoiceId: string, proposed: ProposedAction, opts: { diagnosisId?: number | null; executeIfAuto?: boolean } = {}) {
+  return withLock(`act:${invoiceId}`, () => proposeActionUnlocked(invoiceId, proposed, opts));
+}
+
+async function proposeActionUnlocked(invoiceId: string, proposed: ProposedAction, opts: { diagnosisId?: number | null; executeIfAuto?: boolean }) {
   const row = repo.getInvoice(invoiceId);
   if (!row) throw new Error("Invoice not found");
   const policy = repo.getPolicy();
@@ -61,7 +71,14 @@ export async function proposeAction(invoiceId: string, proposed: ProposedAction,
   return viewAction(repo.getAction(id)!);
 }
 
+/** Owner approval. Takes the same per-invoice lock as proposals, so it can't race an automatic action. */
 export async function approveAction(id: string, edits?: { params?: unknown }) {
+  const found = repo.getAction(id);
+  if (!found) throw new Error("Action not found");
+  return withLock(`act:${found.invoice_id}`, () => approveActionUnlocked(id, edits));
+}
+
+async function approveActionUnlocked(id: string, edits?: { params?: unknown }) {
   const a = repo.getAction(id);
   if (!a) throw new Error("Action not found");
   if (a.status !== "proposed") throw new Error(`Action is ${a.status}`);
@@ -137,11 +154,18 @@ export async function executeAction(id: string, opts: { ownerApproved: boolean }
       return repo.getAction(id)!;
     }
     const currency = row.currency;
+    // Say only what happened: in simulation PayPal was never called, and live, a 2xx means PayPal accepted the
+    // request (the state is then re-read from PayPal below), not that the client received or acted on anything.
+    const live = gw.mode === "live";
+    const inPayPal = (s: string) => (live ? s : `${s} (simulation: PayPal was not called)`);
+    // Live only: how to confirm the change on the invoice we re-read from PayPal afterwards. Without one, the
+    // summary says only that PayPal accepted the request.
+    let confirm: ((after: InvoiceRow) => boolean) | null = null;
     switch (type) {
       case "send_reminder": {
         receipts.push(await gw.sendReminder(row.id, params, requestId));
-        repo.logEvent({ invoice_id: row.id, kind: "reminder_sent", actor: a.origin, summary: `Reminder sent via PayPal: “${params.subject}”`, data: { subject: params.subject, note: params.note, to: params.additional_recipients } });
-        summary = "Reminder delivered by PayPal";
+        repo.logEvent({ invoice_id: row.id, kind: "reminder_sent", actor: a.origin, summary: live ? `Reminder sent through PayPal: “${params.subject}”` : `Reminder recorded in the simulation: “${params.subject}” (PayPal was not called)`, data: { subject: params.subject, note: params.note, to: params.additional_recipients, simulated: !live } });
+        summary = live ? "PayPal accepted the reminder for sending" : "Reminder recorded (simulation: PayPal was not called)";
         break;
       }
       case "offer_payment_plan": {
@@ -159,7 +183,8 @@ export async function executeAction(id: string, opts: { ownerApproved: boolean }
         repo.insertPlan({ id: newId("plan"), invoice_id: row.id, action_id: a.id, installments_json: JSON.stringify(installments), paid_minor_at_start: row.paid_minor, status: "active" });
         const offer = repo.listOffers(row.id).find((o) => o.action_id === a.id);
         if (offer) repo.setOfferStatus(offer.id, "accepted");
-        summary = `Partial payments enabled in PayPal, minimum ${formatMoney(installments[0]!.amount_minor, currency)}`;
+        summary = live ? `Partial payments enabled in PayPal, minimum ${formatMoney(installments[0]!.amount_minor, currency)}` : inPayPal(`Partial payments enabled, minimum ${formatMoney(installments[0]!.amount_minor, currency)}`);
+        confirm = (after) => !!after.partial_allowed && after.min_due_minor === installments[0]!.amount_minor;
         break;
       }
       case "add_early_payment_discount": {
@@ -170,7 +195,7 @@ export async function executeAction(id: string, opts: { ownerApproved: boolean }
             requestId,
           ),
         );
-        summary = `${params.percent}% early-payment discount until ${formatDate(params.expires_on)}`;
+        summary = live ? `PayPal accepted a ${params.percent}% early-payment discount until ${formatDate(params.expires_on)}` : inPayPal(`${params.percent}% early-payment discount until ${formatDate(params.expires_on)}`);
         break;
       }
       case "update_reference": {
@@ -184,17 +209,19 @@ export async function executeAction(id: string, opts: { ownerApproved: boolean }
         });
         const res = await gw.updateInvoice(row.id, body, { requestId, sendToRecipient: true });
         receipts.push(res.receipt);
-        summary = `Reference set to ${params.reference}${params.cc_email ? `, CC ${params.cc_email}` : ""}; updated invoice re-sent by PayPal`;
+        summary = live ? `Reference set to ${params.reference}${params.cc_email ? `, CC ${params.cc_email}` : ""}; PayPal accepted the update and re-sending the invoice` : inPayPal(`Reference set to ${params.reference}${params.cc_email ? `, CC ${params.cc_email}` : ""}; the updated invoice would be re-sent to the client`);
+        confirm = (after) => after.reference === params.reference;
         break;
       }
       case "record_external_payment": {
         receipts.push(await gw.recordPayment(row.id, { method: params.method, payment_date: params.payment_date, amount: { currency_code: currency, value: fromMinor(params.amount_minor) }, note: params.note }, requestId));
-        summary = `Recorded ${formatMoney(params.amount_minor, currency)} received by ${params.method.toLowerCase().replace("_", " ")}`;
+        summary = inPayPal(`Recorded ${formatMoney(params.amount_minor, currency)} received by ${params.method.toLowerCase().replace("_", " ")}`);
+        confirm = (after) => after.paid_minor >= row.paid_minor + params.amount_minor;
         break;
       }
       case "pause_reminders": {
         receipts.push(await gw.cancelAutoReminders(row.id, requestId));
-        summary = "PayPal automatic reminders paused";
+        summary = live ? "PayPal accepted the request to pause its automatic reminders" : inPayPal("Automatic reminders paused");
         break;
       }
       case "escalate_to_owner":
@@ -205,7 +232,11 @@ export async function executeAction(id: string, opts: { ownerApproved: boolean }
         break;
     }
     const after = ["send_reminder", "escalate_to_owner", "wait"].includes(type) ? row : await refreshInvoice(a.invoice_id);
-    repo.transitionAction(id, ["executing"], "executed", { result_json: JSON.stringify({ summary, receipts, invoice_status: after.status }) });
+    // Verify, don't assume: a 2xx means PayPal accepted the request; the re-read invoice shows whether it took effect.
+    const verified = live && confirm ? confirm(after) : null;
+    if (verified === true) summary = `${summary} (confirmed by re-reading the invoice from PayPal)`;
+    if (verified === false) summary = `PayPal accepted the request, but the re-read invoice doesn't show it yet: ${summary}`;
+    repo.transitionAction(id, ["executing"], "executed", { result_json: JSON.stringify({ summary, receipts, invoice_status: after.status, verified }) });
     repo.supersedeSameType(a.invoice_id, type, id);
     repo.logEvent({ invoice_id: a.invoice_id, kind: "action_executed", actor: a.origin === "owner" ? "owner" : "unstuck", summary: `${ACTION_META[type].label}: ${summary}`, data: { action_id: id, receipts } });
   } catch (err) {

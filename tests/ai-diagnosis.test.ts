@@ -153,7 +153,7 @@ describe("caching and force refresh", () => {
 });
 
 describe("explicit handling of failed and unusable answers", () => {
-  it("sends the documented request: 16k output budget, effort, structured format without the SDK parser, timeout and one retry", async () => {
+  it("sends the documented request: 16k output budget, effort, structured format without the SDK parser, 60 s timeout, SDK retries off", async () => {
     enableAi();
     const calls = fakeClaude(ok());
     await diagnoseInvoice(ids.northwind!);
@@ -163,24 +163,26 @@ describe("explicit handling of failed and unusable answers", () => {
     expect(typeof body.output_config.format.parse).toBe("undefined");
     expect(body).not.toHaveProperty("thinking"); // Opus 5.5 rejects disabling thinking
     expect(body).not.toHaveProperty("temperature");
-    expect(options).toEqual({ timeout: 120_000, maxRetries: 1 });
+    expect(options).toEqual({ timeout: 60_000, maxRetries: 0 }); // retries happen in the shared, budgeted runner
   });
 
+  // The last column is the number of HTTP attempts: transient errors get bounded retries, everything else one.
   it.each([
-    ["an HTTP error", apiError(500, "api_error", "Internal server error"), "failed", /HTTP 500 api_error.*request id req_test123/],
-    ["a bad key", apiError(401, "authentication_error", "invalid x-api-key sk-ant-api03-SECRETSECRET"), "failed", /HTTP 401 authentication_error \(check ANTHROPIC_API_KEY\)/],
-    ["a network failure", new Anthropic.APIConnectionError({ message: "fetch failed" }), "failed", /could not reach the Claude API/],
-    ["a timeout", new Anthropic.APIConnectionTimeoutError(), "failed", /did not respond in time/],
-    ["a cut-off answer", { stop_reason: "max_tokens", content: [{ type: "text", text: '{"reason":"missing_info","confid' }] }, "unusable", /cut off at the 16,000-token output limit/],
-    ["a refusal", { stop_reason: "refusal", content: [], stop_details: { category: "cyber" } }, "unusable", /declined this request \(cyber\)/],
-    ["invalid JSON", { stop_reason: "end_turn", content: [{ type: "text", text: "Sure! Here is the diagnosis: ..." }] }, "unusable", /not valid JSON/],
-    ["schema-invalid JSON", ok({ ...VALID, reason: "aliens", inference: undefined }), "unusable", /didn't match the diagnosis schema/],
-    ["an empty answer", { stop_reason: "end_turn", content: [] }, "unusable", /no diagnosis in the answer/],
-  ] as [string, Reply, string, RegExp][])("%s → rules fallback, recorded as %s, never as an AI diagnosis", async (_label, reply, status, detail) => {
+    ["an HTTP error", apiError(500, "api_error", "Internal server error"), "failed", /HTTP 500 api_error.*request id req_test123 after 3 attempts/, 3],
+    ["an overloaded API", apiError(529, "overloaded_error", "Overloaded"), "failed", /Claude temporarily unavailable, HTTP 529 overloaded_error.* after 3 attempts/, 3],
+    ["a bad key", apiError(401, "authentication_error", "invalid x-api-key sk-ant-api03-SECRETSECRET"), "failed", /HTTP 401 authentication_error \(check ANTHROPIC_API_KEY\)/, 1],
+    ["a network failure", new Anthropic.APIConnectionError({ message: "fetch failed" }), "failed", /could not reach the Claude API after 3 attempts/, 3],
+    ["a timeout", new Anthropic.APIConnectionTimeoutError(), "failed", /did not respond in time$/, 1],
+    ["a cut-off answer", { stop_reason: "max_tokens", content: [{ type: "text", text: '{"reason":"missing_info","confid' }] }, "unusable", /cut off at the 16,000-token output limit/, 1],
+    ["a refusal", { stop_reason: "refusal", content: [], stop_details: { category: "cyber" } }, "unusable", /declined this request \(cyber\)/, 1],
+    ["invalid JSON", { stop_reason: "end_turn", content: [{ type: "text", text: "Sure! Here is the diagnosis: ..." }] }, "unusable", /not valid JSON/, 1],
+    ["schema-invalid JSON", ok({ ...VALID, reason: "aliens", inference: undefined }), "unusable", /didn't match the diagnosis schema/, 1],
+    ["an empty answer", { stop_reason: "end_turn", content: [] }, "unusable", /no diagnosis in the answer/, 1],
+  ] as [string, Reply, string, RegExp, number][])("%s → rules fallback, recorded as %s, never as an AI diagnosis", async (_label, reply, status, detail, attempts) => {
     enableAi();
     const calls = fakeClaude(reply);
     const res = await diagnoseInvoice(ids.northwind!);
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(attempts);
     const d = latest();
     expect(d).toMatchObject({ source: "rules", ai_status: status, model: null, reason: "missing_info" }); // rules still diagnose
     expect(d.ai_detail).toMatch(detail);
@@ -220,10 +222,11 @@ describe("no repeated API calls after a failure", () => {
     await diagnoseInvoice(ids.northwind!);
     const failed = latest();
     expect(failed.ai_status).toBe("failed");
+    expect(calls).toHaveLength(3); // one logical call: 3 bounded HTTP attempts for a transient error
     const proposals = repo.listActions({ invoiceId: ids.northwind! }).map((a) => a.id);
 
     await diagnoseInvoice(ids.northwind!); // immediately again: within the cooldown
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(3);
 
     // Move the last attempt past the cooldown.
     const past = new Date(Date.now() - AI_RETRY_COOLDOWN_MS - 1000).toISOString();
@@ -231,14 +234,14 @@ describe("no repeated API calls after a failure", () => {
     (await import("@/lib/db")).getDb().prepare("UPDATE diagnoses SET ai_attempted_at = ? WHERE id = ?").run(past, failed.id);
 
     const retry = await diagnoseInvoice(ids.northwind!);
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(6);
     expect(retry).toMatchObject({ skipped: true, aiFallback: true });
     expect(latest().id).toBe(failed.id); // kept, not rewritten
     expect(repo.listActions({ invoiceId: ids.northwind! }).map((a) => a.id)).toEqual(proposals); // no churn
     expect(repo.listEvents({ invoiceId: ids.northwind!, limit: 20 }).some((e) => e.kind === "ai_retry_failed")).toBe(true);
 
     await diagnoseInvoice(ids.northwind!); // the failed retry restarted the cooldown
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(6);
   });
 
   it("a successful retry after the cooldown replaces the rules diagnosis with Claude's", async () => {

@@ -69,7 +69,7 @@ try {
   await page.waitForTimeout(800);
   const grid = page.locator(".ag-grid-scrolling-rows");
   check("board shows reasons", (await grid.getByText("Missing PO / AP details").count()) === 1 && (await grid.getByText("Cash is tight").count()) === 1 && (await grid.getByText("Disputing the work").count()) === 1);
-  check("friendly reminder sent automatically", (await page.getByText(/Reminder delivered/).count()) > 0);
+  check("friendly reminder sent automatically (labelled as simulated)", (await page.getByText(/Reminder recorded \(simulation: PayPal was not called\)/).count()) > 0);
   check("risk column ranks a high-risk invoice first", /High risk/.test(await grid.locator(".ag-row").first().innerText()));
   await page.screenshot({ path: path.join(OUT, "02-board-diagnosed.png") });
 

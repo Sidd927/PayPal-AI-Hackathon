@@ -12,7 +12,7 @@ import { ACTION_TYPES, type ProposedAction, STUCK_REASONS, type StuckReason } fr
 import { addDays, formatDate, isIsoDate } from "../dates";
 import { tryToMinor } from "../money";
 import { buildPlan, type Policy, type PolicyContext, suggestPlans, validatePlan } from "../policy";
-import { consumeAiBudget, quoteUntrusted, safeErrorText } from "./shared";
+import { quoteUntrusted, safeErrorText } from "./shared";
 import { getAiProvider } from "./providers";
 import type { AiCallMeta, AiFinish } from "./providers/types";
 import { type AiProviderId, readConfig } from "../config";
@@ -209,8 +209,8 @@ export async function diagnose(input: DiagnosisInput): Promise<DiagnosisResult> 
     const why = cfg.unavailableReason === "turned_off" ? "AI is turned off (AI_PROVIDER=none or UNSTUCK_AI=off)" : cfg.unavailableReason === "unknown_provider" ? `Unknown AI_PROVIDER ${JSON.stringify(String(process.env.AI_PROVIDER).slice(0, 20))} (use gemini or anthropic)` : undefined;
     return rules("not_configured", why);
   }
-  if (!consumeAiBudget()) return rules("budget_exhausted", "AI not used: daily AI call limit reached (AI_DAILY_CALL_LIMIT)");
-
+  // The daily budget is charged per HTTP attempt inside the provider's retry runner (../reliability), so a limit
+  // reached before the first attempt comes back as status "budget_exhausted" with no request sent.
   let res: Awaited<ReturnType<typeof provider.generateStructured>>;
   try {
     res = await provider.generateStructured({ system: DIAGNOSIS_SYSTEM_PROMPT, user: renderInput(input), schema: DiagnosisOutput, maxOutputTokens: DIAGNOSIS_MAX_TOKENS });

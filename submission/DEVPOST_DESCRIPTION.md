@@ -13,6 +13,8 @@
   Without a key, a labelled rules-only fallback runs instead. The *Unstuck Insights* agent in AG Studio uses no LLM: it routes questions to predefined reports over read-only data.
 - *In development:* Claude Code, an AI coding assistant, wrote much of the code and documentation under our direction.
 
+**Built during the hackathon:** the repository's first commit is dated 4 November 2026. All of the code, tests and documentation were written after that, for this hackathon; nothing was carried over from an earlier project.
+
 ---
 
 ## Inspiration
@@ -45,9 +47,9 @@ Unstuck is an AI receivables-resolution agent for businesses that invoice with P
 
    A deterministic policy engine, not the model, decides whether the remedy runs automatically, needs your OK, or is blocked.
 4. **Your OK:** anything that changes money waits for one tap. The card shows the exact PayPal change and every rule check. When you approve, the rules are checked again against PayPal's *current* invoice, so yesterday's approval can't record a cheque on an invoice paid this morning.
-5. **Act in PayPal:** the change is made through the PayPal Invoicing API with an idempotency key, and shown only after PayPal confirms it.
-6. **Agree with the client:** every reminder links to a private resolution page. A client who can't pay in full picks a plan your rules allow, sees the consequences in plain words, and accepting it switches the PayPal invoice to partial payments immediately.
-7. **Verify:** payments arrive by verified PayPal webhook. Unstuck re-reads the invoice and never trusts the payload. Installments advance the minimum due. A missed promise or installment sends the invoice back into the loop, where the agent follows it up within your rules.
+5. **Act in PayPal:** the change is made through the PayPal Invoicing API with an idempotency key. Unstuck reports exactly what it knows: *accepted by PayPal* when the API call succeeds, and *confirmed* only after re-reading the invoice from PayPal shows the change (reference, plan, recorded payment). A reminder is reported as accepted for sending, because PayPal does not report delivery.
+6. **Agree with the client:** every reminder links to a private resolution page. A client who can't pay in full picks a plan your rules allow, sees the consequences in plain words, and accepting it switches the PayPal invoice to partial payments immediately. (This live path is verified against our strict PayPal mock; the video shows it in the labelled simulation.)
+7. **Verify:** payments arrive by PayPal webhook, with the signature verified, or by sync. Unstuck re-reads the invoice and never trusts the payload. Webhook handling is tested against a strict mock only; live registration and live delivery haven't been verified (see *Challenges*). Installments advance the minimum due. A missed promise or installment sends the invoice back into the loop, where the agent follows it up within your rules.
 8. **Learn:** Insights shows what happened after each action: paid in full since, part paid, or nothing yet. It is labelled as timing, not proof of causation.
 
 The dashboard shows the loop itself. Every open invoice sits in exactly one stage (Spotted, Understood, Waiting for you, Acted, Agreed, Paid), computed from recorded facts.
@@ -57,7 +59,7 @@ The dashboard shows the loop itself. Every open invoice sits in exactly one stag
 - "Which payment promises have been missed?"
 - "Which invoices need owner intervention today?"
 
-Our own agent, built with the AG Studio Agent Framework, answers with names and amounts from read-only data and opens the matching report. It declines anything it can't answer from the data.
+In AG Studio's AI panel (*Build your own report*), our own agent, built with the AG Studio Agent Framework, answers with names and amounts from read-only data and opens the matching report. It declines anything it can't answer from the data.
 
 ## How we built it
 
@@ -86,7 +88,10 @@ Our own agent, built with the AG Studio Agent Framework, answers with names and 
 - **PayPal's invoice update replaces the whole invoice.** We GET, strip read-only fields, change one thing and PUT. This is proven against a strict mock that rejects read-only fields.
 - **Letting an AI talk money with a client safely.** The assistant can only ask the rules engine for a plan, and nothing happens until the client accepts.
 - **Stale approvals.** Our own audit found that an approved action ran even if the invoice had changed since. Execution now re-runs the rules against PayPal's current state, and the tests fail if that check is removed.
-- **No sandbox access from our build environment.** Its network policy blocked PayPal's sandbox. We built a strict PayPal mock and ran the real app against it over HTTP (26 checks, 177 API calls). The live sandbox run has a step-by-step runbook. _[Replace this line with the sandbox result once it is recorded.]_
+- **Two places to test.** Our cloud build environment couldn't reach PayPal's sandbox, so we built a strict PayPal mock and ran the real app against it over HTTP (26 checks, 177 API calls). On our own machine we seeded and synced a real sandbox: 13 invoices, 8 open and 5 historically paid. _[Confirm against your latest `npm run check:sandbox` output before submitting.]_
+- **Webhooks without a public URL.** Signature verification, deduplication and processing are tested against the strict mock. Registering a live webhook needs a public HTTPS URL and a PayPal write, so live registration and live delivery have **not** been verified; locally, **Sync** picks up payments instead.
+- **An AI provider that is sometimes overloaded.** Gemini intermittently answered HTTP 503 ("model overloaded"). The SDK's own retries fired after about a second, ignored our request pacing and budget, and made it worse. We replaced them with one retry runner: every attempt is paced and budgeted, 503s back off with jitter, a per-minute 429 waits for Google's own hint (clamped, since it is untrusted input), a daily quota pauses calls, and repeated failures open a circuit breaker with a single recovery probe. Whatever happens, the invoice gets a clearly labelled rules diagnosis, never a fake AI one.
+- **Races you only find by looking.** Two overlapping diagnoses of the same invoice could both pass the reminder-cadence rule and send a client two reminders, and a payment update could overwrite an owner's change to the invoice. Per-invoice locks now serialise diagnoses, actions, approvals and payment updates, with tests that fail if the locks are removed.
 
 ## Accomplishments
 
@@ -100,7 +105,7 @@ Our own agent, built with the AG Studio Agent Framework, answers with names and 
 
   Code stops each one.
 - Test coverage:
-  - 208 unit, agent, adversarial, reliability, AI-provider and AI tool-security tests;
+  - 276 unit, agent, adversarial, reliability, AI-provider, AI tool-security and concurrency tests;
   - 26 contract checks;
   - 22 browser checks;
   - a 26-scenario AI evaluation with strict scoring. The rules-only baseline scored 14/26 correct with 12 abstentions, 0 forbidden actions and 0 safety violations. _[Add the Gemini result once it has run; don't publish one before.]_

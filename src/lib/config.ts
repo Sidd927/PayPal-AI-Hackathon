@@ -16,6 +16,16 @@ export const DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5";
  * AI provider selection. Gemini is the default; AI_PROVIDER=anthropic switches to Claude; AI_PROVIDER=none
  * (or the older UNSTUCK_AI=off) turns AI off. Only the selected provider's key is needed.
  */
+/**
+ * A numeric setting, or `fallback` when it is unset or not a finite number. Fails safe: a typo such as
+ * GEMINI_MAX_RPM=ten must not switch pacing off, nor AI_DAILY_CALL_LIMIT=abc remove the daily cap.
+ */
+function numberOr(value: string | undefined, fallback: number): number {
+  if (value === undefined || value.trim() === "") return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function aiConfig(env: NodeJS.ProcessEnv) {
   const raw = (env.AI_PROVIDER || "gemini").trim().toLowerCase();
   const off = raw === "none" || raw === "off" || env.UNSTUCK_AI === "off";
@@ -35,8 +45,8 @@ function aiConfig(env: NodeJS.ProcessEnv) {
     /** Claude only: output_config.effort. */
     effort: (env.ANTHROPIC_EFFORT || "medium") as "low" | "medium" | "high",
     /** Gemini only: client-side requests-per-minute ceiling (free-tier limits are per minute and per day). */
-    geminiMaxRpm: Math.max(1, Number(env.GEMINI_MAX_RPM || 10)),
-    dailyCallLimit: Number(env.AI_DAILY_CALL_LIMIT || 500),
+    geminiMaxRpm: Math.max(1, numberOr(env.GEMINI_MAX_RPM, 10)),
+    dailyCallLimit: Math.max(0, numberOr(env.AI_DAILY_CALL_LIMIT, 500)),
   };
 }
 

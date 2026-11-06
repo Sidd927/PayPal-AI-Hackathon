@@ -57,7 +57,7 @@ Every diagnosis (model id, source, error), proposal (decision and checks), appro
 
 ## Cost controls
 
-`AI_DAILY_CALL_LIMIT` (any provider), input-hash reuse, a 30-minute retry cooldown after a failure, bounded output tokens, a 120 s per-request timeout with at most one retry (Gemini: only on 408/5xx, never on 429), Gemini request pacing (`GEMINI_MAX_RPM`, default 10/min), and Claude prompt caching. A full board diagnosis is ~8 calls.
+`AI_DAILY_CALL_LIMIT` (any provider, counted per HTTP attempt), input-hash reuse, a 30-minute retry cooldown per invoice after a failure, bounded output tokens, a 60 s per-attempt timeout, one shared retry runner (`src/lib/ai/reliability.ts`: SDK retries off; transient errors retried with backoff and jitter within a bounded number of attempts and a deadline; per-minute 429 retried once after Google's `RetryInfo`; daily quota never retried; a circuit breaker after repeated 503s), Gemini request pacing for every attempt (`GEMINI_MAX_RPM`, default 10/min), and Claude prompt caching. A full board diagnosis is ~8 calls when Gemini is healthy. Diagnoses and actions are serialised per invoice, so overlapping runs can't duplicate an AI call or an action. Details: [`AI_PROVIDERS.md`](AI_PROVIDERS.md).
 
 ## Phase 3: Insights agents (AG Studio)
 

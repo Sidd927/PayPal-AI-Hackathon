@@ -40,6 +40,9 @@ export type ScenarioResult = {
   requestId?: string | null;
   latencyMs?: number;
   usage?: AiUsage;
+  /** HTTP attempts for this scenario's call (retries included) and, on failure, the error class. */
+  attempts?: number;
+  errorKind?: string;
 };
 
 const norm = (s: string) => s.toLowerCase().replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/…$/, "").replace(/\s+/g, " ").trim();
@@ -133,6 +136,8 @@ export async function runScenario(s: Scenario): Promise<ScenarioResult> {
     requestId: r.meta?.requestId ?? null,
     latencyMs: r.meta?.latencyMs,
     usage: r.meta?.usage,
+    attempts: r.meta?.attempts,
+    errorKind: r.meta?.errorKind,
   };
 }
 
@@ -179,6 +184,10 @@ export function summarise(results: ScenarioResult[]) {
     errors: results.filter((r) => r.error).length,
     aiByStatus: Object.fromEntries([...new Set(results.map((r) => r.ai))].map((st) => [st, results.filter((r) => r.ai === st).length])),
     provider: results.find((r) => r.provider)?.provider ?? null,
+    // Why fallbacks happened (unavailable / rate_limited / quota_exhausted / auth / …), and how many HTTP attempts
+    // the run made in total (retries included), so 503s, 429s and bad answers can be told apart.
+    errorKinds: Object.fromEntries([...new Set(results.map((r) => r.errorKind).filter((k): k is string => !!k))].map((k) => [k, results.filter((r) => r.errorKind === k).length])),
+    httpAttempts: results.reduce((a, r) => a + (r.attempts ?? 0), 0),
     // Accuracy over the scenarios the AI provider actually answered (fallbacks excluded), so a partial run can't blur the two.
     providerOnly: (() => {
       const rs = results.filter((r) => r.ai === "used");

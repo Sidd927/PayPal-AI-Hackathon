@@ -2,7 +2,7 @@
 import { getDb } from "../db";
 import { readConfig } from "../config";
 
-/** Simple daily guard against runaway spend. One unit per logical AI request, whichever provider. */
+/** Daily guard against runaway spend: one unit per HTTP attempt to the provider (retries count), any provider. Charged by ./reliability. */
 export function consumeAiBudget(): boolean {
   const limit = readConfig().ai.dailyCallLimit;
   const day = new Date().toISOString().slice(0, 10);
@@ -34,18 +34,29 @@ export function safeErrorText(text: string): string {
 }
 
 /**
- * Minimum spacing between request starts, process-wide per key (e.g. "gemini"). Keeps a free tier's
- * requests-per-minute limit from being exceeded by concurrent agent runs or the eval loop.
+ * Minimum spacing between request starts, process-wide per key (e.g. "gemini"). Every HTTP attempt to the provider
+ * takes a slot (the retry runner in ./reliability calls this before each attempt), so the configured
+ * requests-per-minute holds for retries too. Kept on globalThis so dev reloads or duplicated module instances
+ * can't reset it.
  */
-const nextSlot = new Map<string, number>();
-export async function paceRequests(key: string, perMinute: number, sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))) {
+const pacing = ((globalThis as unknown as { __unstuckPacing?: Map<string, number> }).__unstuckPacing ??= new Map<string, number>());
+const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+export async function paceRequests(key: string, perMinute: number, sleep: (ms: number) => Promise<void> = realSleep) {
   const gap = Math.ceil(60_000 / perMinute);
   const now = Date.now();
-  const slot = Math.max(now, nextSlot.get(key) ?? 0);
-  nextSlot.set(key, slot + gap);
+  const slot = Math.max(now, pacing.get(key) ?? 0);
+  pacing.set(key, slot + gap);
   if (slot > now) await sleep(slot - now);
+}
+/** How long the next request for `key` would wait for its slot (no reservation). */
+export function pacingWaitMs(key: string): number {
+  return Math.max(0, (pacing.get(key) ?? 0) - Date.now());
+}
+/** Push the next slot for `key` to at least `untilMs` (a provider asked everyone to wait, e.g. a 429 RetryInfo). */
+export function deferPacing(key: string, untilMs: number) {
+  pacing.set(key, Math.max(pacing.get(key) ?? 0, untilMs));
 }
 /** Test hook. */
 export function resetPacing() {
-  nextSlot.clear();
+  pacing.clear();
 }

@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import https from "node:https";
 import { z } from "zod";
 import { getGateway, setGateway } from "@/lib/config";
-import { repo } from "@/lib/db";
+import { getDb, repo } from "@/lib/db";
 import { SimulatedGateway } from "@/lib/paypal/simulated";
 import { seedScenario } from "@/lib/demo/scenario";
 import { refreshInvoice } from "@/lib/services/invoices";
@@ -21,6 +21,8 @@ import { validatePayerToolCall } from "@/lib/ai/payer-agent";
 import { GEMINI_API_BASE_URL, GeminiProvider, setGeminiClient, type GeminiClientLike } from "@/lib/ai/providers/gemini";
 import { clearRawCache, conversationScope, RAW_MAX_ENTRIES, RAW_TTL_MS, rawCacheSize, rememberRaw, studioItemsToChat } from "@/lib/ai/studio-chat";
 import { POST as llm } from "@/app/api/insights/llm/route";
+import { breakerState, setRetryTiming } from "@/lib/ai/reliability";
+import { deferPacing, pacingWaitMs } from "@/lib/ai/shared";
 import { installNetworkGuard } from "../scripts/lib/network-guard";
 import { freshEnv } from "./helpers";
 
@@ -168,7 +170,7 @@ describe("AG Studio raw-content cache (thought signatures stay server-side and p
   it("expired entries are never served, even without a newer write", () => {
     const now = Date.now();
     rememberRaw(conversationScope([userMsg("q")]), [{ id: "c1", name: "query", args: { table: "invoices" } }], raw("sig-old"));
-    vi.spyOn(Date, "now").mockReturnValue(now + RAW_TTL_MS + 1);
+    vi.spyOn(Date, "now").mockReturnValue(now + RAW_TTL_MS + 1_000); // well past the TTL, whatever ms the insert took
     expect(restored(replay("q", "c1", '{"table":"invoices"}'))).toBeNull();
     expect(rawCacheSize()).toBe(0);
   });
@@ -205,38 +207,189 @@ describe("AG Studio raw-content cache (thought signatures stay server-side and p
   });
 });
 
-describe("the real Gemini SDK client (fetch stubbed, no network)", () => {
-  function stubFetch(status: number, body: object) {
+describe("signature cache miss (server restart / expiry) degrades to a clear error, never a wrong answer", () => {
+  it("replays without the signature, and a Gemini rejection becomes a 502 with a readable error", async () => {
+    const post = (body: unknown) => llm(new Request("http://localhost/api/insights/llm", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
+    clearRawCache(); // as after a restart
+    const calls = fakeGemini(Object.assign(new Error(JSON.stringify({ error: { code: 400, status: "INVALID_ARGUMENT", message: "Function call is missing a thought_signature in functionCall parts." } })), { status: 400 }));
+    const r = await post({
+      tools: [{ name: "query", description: "Run a query", parameters: { type: "object", properties: {} } }],
+      input: [
+        { type: "message", role: "user", content: [{ type: "input_text", text: "Owed by client?" }] },
+        { type: "function_call", callId: "gem_lost", name: "query", arguments: "{}" },
+        { type: "function_call_output", callId: "gem_lost", output: "[]" },
+      ],
+    });
+    expect(calls).toHaveLength(1); // a 400 is not retried
+    expect(calls[0]!.contents[1].parts[0].thoughtSignature).toBeUndefined(); // nothing invented
+    expect(r.status).toBe(502);
+    expect((await r.json()).error).toMatch(/HTTP 400 INVALID_ARGUMENT \("Function call is missing a thought_signature/);
+  });
+});
+
+describe("the real Gemini SDK client + retry runner (fetch stubbed, no network)", () => {
+  type Reply = { status: number; body?: object; headers?: Record<string, string> } | Error;
+  /** Stub the network: returns the scripted replies in order (the last one repeats). */
+  function stubFetch(...replies: Reply[]) {
     const seen: { url: string; headers: Headers }[] = [];
     vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       seen.push({ url, headers: new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)) });
-      return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+      const r = replies.length > 1 ? replies.shift()! : replies[0]!;
+      if (r instanceof Error) throw r;
+      return new Response(JSON.stringify(r.body ?? {}), { status: r.status, headers: { "content-type": "application/json", ...(r.headers ?? {}) } });
     });
     return seen;
   }
-  const provider = (key: string) => new GeminiProvider("gemini-3.5-flash-lite", key, 600000);
+  /** Record every wait (backoff and pacing) instead of sleeping. */
+  function recordWaits() {
+    const waits: number[] = [];
+    setRetryTiming({ sleep: async (ms) => void waits.push(ms), random: () => 1 });
+    return waits;
+  }
+  const provider = (key: string, rpm = 600000) => new GeminiProvider("gemini-3.5-flash-lite", key, rpm);
   const req = { system: "s", user: "u", schema: z.object({ a: z.string() }), maxOutputTokens: 10 };
+  const okBody = { responseId: "resp-ok", candidates: [{ finishReason: "STOP", content: { role: "model", parts: [{ text: '{"a":"x"}' }] } }] };
+  const e503 = { status: 503, body: { error: { code: 503, status: "UNAVAILABLE", message: "The model is overloaded. Please try again later." } } };
+  const usage = () => JSON.parse((getDb().prepare("SELECT value_json FROM settings WHERE key = 'ai_usage'").get() as { value_json: string } | undefined)?.value_json ?? '{"calls":0}').calls as number;
 
-  it("a 429 is not retried (one HTTP request) and is classified as rate limited", async () => {
-    const seen = stubFetch(429, { error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "Quota exceeded per minute" } });
-    const r = await provider("key-429-test").generateStructured(req);
-    expect(seen).toHaveLength(1);
-    expect(r).toMatchObject({ ok: false, status: "rate_limited" });
+  it("a transient 503 is retried with exponential backoff (3 HTTP attempts), then succeeds; attempts and timing are recorded", async () => {
+    const waits = recordWaits();
+    const seen = stubFetch(e503, e503, { status: 200, body: okBody });
+    const r = await provider("key-503-ok").generateStructured(req);
+    expect(seen).toHaveLength(3);
+    expect(r).toMatchObject({ ok: true, meta: { attempts: 3, requestId: "resp-ok" } });
+    // Backoff waits only: base 4 s, doubling (jitter pinned to 100% here). At the test's huge pacing rate the
+    // pacing gap rounds up to 1 ms, so an occasional 1 ms pacing wait is ignored.
+    expect(waits.filter((w) => w > 10)).toEqual([4_000, 8_000]);
+    expect(usage()).toBe(3); // every HTTP attempt is charged to the daily budget
   });
 
-  it("a 503 is retried exactly once (two HTTP requests), then reported as failed", async () => {
-    const seen = stubFetch(503, { error: { code: 503, status: "UNAVAILABLE", message: "overloaded" } });
+  it("an exhausted 503 is reported as 'temporarily unavailable' with Google's message, never as success", async () => {
+    recordWaits();
+    const seen = stubFetch(e503);
     const r = await provider("key-503-test").generateStructured(req);
+    expect(seen).toHaveLength(3); // bounded: STRUCTURED_RETRY.maxAttempts
+    expect(r).toMatchObject({ ok: false, status: "failed", meta: { attempts: 3, errorKind: "unavailable", httpStatus: 503 } });
+    expect(!r.ok && r.error).toMatch(/Gemini temporarily unavailable, HTTP 503 UNAVAILABLE \("The model is overloaded. Please try again later."\) after 3 attempts/);
+  });
+
+  it("every retry takes a pacing slot, so GEMINI_MAX_RPM holds for retries too", async () => {
+    // Virtual clock: sleeping advances time, so request start times are exact.
+    let now = 1_800_000_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    setRetryTiming({ sleep: async (ms) => void (now += ms), random: () => 1 });
+    const starts: number[] = [];
+    vi.stubGlobal("fetch", async () => {
+      starts.push(now);
+      return starts.length === 1
+        ? new Response(JSON.stringify(e503.body), { status: 503, headers: { "content-type": "application/json" } })
+        : new Response(JSON.stringify(okBody), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const r = await provider("key-pacing", 3).generateStructured(req); // 3/min → request starts ≥ 20 s apart
+    expect(r.ok).toBe(true);
+    expect(starts).toHaveLength(2);
+    expect(starts[1]! - starts[0]!).toBe(20_000); // 4 s backoff, then it waits out the rest of its pacing slot
+  });
+
+  it("a Retry-After header on a 503 is honoured when longer than the backoff", async () => {
+    const waits = recordWaits();
+    stubFetch({ ...e503, headers: { "retry-after": "12" } }, { status: 200, body: okBody });
+    const r = await provider("key-retry-after").generateStructured(req);
+    expect(r.ok).toBe(true);
+    expect(waits[0]).toBe(12_000);
+  });
+
+  it("a per-minute 429 is retried once after Google's RetryInfo delay, and pushes back every other request too", async () => {
+    const waits = recordWaits();
+    const body429 = { error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "Quota exceeded for metric generate_content_free_tier_requests", details: [{ "@type": "type.googleapis.com/google.rpc.QuotaFailure", violations: [{ quotaId: "GenerateRequestsPerMinutePerProjectPerModel-FreeTier" }] }, { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "7s" }] } };
+    const seen = stubFetch({ status: 429, body: body429 });
+    const r = await provider("key-429-test").generateStructured(req);
+    expect(seen).toHaveLength(2); // one retry only, even though maxAttempts is 3
+    expect(r).toMatchObject({ ok: false, status: "rate_limited", meta: { errorKind: "rate_limited", httpStatus: 429 } });
+    expect(waits[0]).toBe(7_000);
+    expect(!r.ok && r.error).toMatch(/requests-per-minute limit; Google asked to wait 7 s\) after 2 attempts/);
+    expect(pacingWaitMs("gemini")).toBeGreaterThan(5_000); // the next caller waits as well
+  });
+
+  it("a daily-quota 429 is never retried and pauses Gemini calls (no request, no budget) until it clears", async () => {
+    recordWaits();
+    const daily = { status: 429, body: { error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "Quota exceeded", details: [{ "@type": "type.googleapis.com/google.rpc.QuotaFailure", violations: [{ quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier" }] }] } } };
+    const seen = stubFetch(daily);
+    const r1 = await provider("key-daily").generateStructured(req);
+    expect(seen).toHaveLength(1);
+    expect(r1).toMatchObject({ ok: false, status: "rate_limited", meta: { errorKind: "quota_exhausted" } });
+    const before = usage();
+    const r2 = await provider("key-daily").generateStructured(req);
+    expect(seen).toHaveLength(1); // nothing sent
+    expect(usage()).toBe(before); // nothing charged
+    expect(r2).toMatchObject({ ok: false, status: "rate_limited", meta: { errorKind: "circuit_open", attempts: 0 } });
+    expect(!r2.ok && r2.error).toMatch(/calls are paused until .* UTC \(the daily quota is exhausted\)/);
+  });
+
+  it("repeated exhausted 503s open the circuit breaker: later calls fail fast instead of piling on", async () => {
+    recordWaits();
+    const seen = stubFetch(e503);
+    await provider("key-breaker").generateStructured(req);
+    await provider("key-breaker").generateStructured(req);
+    expect(seen).toHaveLength(6);
+    expect(breakerState("gemini").open).toBe(true);
+    const r = await provider("key-breaker").chatTurn({ system: ["s"], items: [{ role: "user", text: "hi" }], tools: [], maxOutputTokens: 10 });
+    expect(seen).toHaveLength(6);
+    expect(r).toMatchObject({ ok: false, status: "failed", meta: { errorKind: "circuit_open", attempts: 0 } });
+  });
+
+  it("the daily budget is checked before every attempt: retries stop when it runs out", async () => {
+    recordWaits();
+    process.env.AI_DAILY_CALL_LIMIT = "2";
+    const seen = stubFetch(e503);
+    const r = await provider("key-budget").generateStructured(req);
     expect(seen).toHaveLength(2);
-    expect(r).toMatchObject({ ok: false, status: "failed" });
-  }, 20_000);
+    expect(!r.ok && r.error).toMatch(/not retried \(daily AI call limit reached\)/);
+    const r2 = await provider("key-budget").generateStructured(req);
+    expect(seen).toHaveLength(2);
+    expect(r2).toMatchObject({ ok: false, status: "budget_exhausted" });
+  });
+
+  it.each<[string, Reply, number, string]>([
+    ["an invalid key", { status: 400, body: { error: { code: 400, status: "INVALID_ARGUMENT", message: "API key not valid. Please pass a valid API key.", details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "API_KEY_INVALID" }] } } }, 1, "auth"],
+    ["an unknown model", { status: 404, body: { error: { code: 404, status: "NOT_FOUND", message: "models/x is not found" } } }, 1, "model_not_found"],
+    ["a malformed request", { status: 400, body: { error: { code: 400, status: "INVALID_ARGUMENT", message: "Invalid value at 'generation_config'" } } }, 1, "invalid_request"],
+    ["a client-side timeout", Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" }), 1, "timeout"],
+    ["a network failure", new TypeError("fetch failed"), 3, "network"],
+  ])("%s → %i HTTP attempt(s), classified as %s", async (_n, reply, attempts, kind) => {
+    recordWaits();
+    const seen = stubFetch(reply);
+    const r = await provider(`key-${kind}`).generateStructured(req);
+    expect(seen).toHaveLength(attempts);
+    expect(r).toMatchObject({ ok: false, meta: { errorKind: kind, attempts } });
+  });
+
+  it("an interactive turn doesn't queue for minutes behind background diagnoses: it fails fast and nothing is sent", async () => {
+    recordWaits();
+    const seen = stubFetch({ status: 200, body: okBody });
+    deferPacing("gemini", Date.now() + 60_000); // e.g. an agent run has queued diagnoses at 3/min
+    const r = await provider("key-queue", 3).chatTurn({ system: ["s"], items: [{ role: "user", text: "hi" }], tools: [], maxOutputTokens: 10 });
+    expect(seen).toHaveLength(0);
+    expect(r).toMatchObject({ ok: false, status: "rate_limited", meta: { errorKind: "queue_full", attempts: 0 } });
+    // Background diagnosis still queues (no queue limit) and goes through.
+    const d = await provider("key-queue", 3).generateStructured(req);
+    expect(d.ok).toBe(true);
+  });
+
+  it("chat turns (payer page, Studio) use a shorter retry budget: at most 2 attempts", async () => {
+    recordWaits();
+    const seen = stubFetch(e503);
+    const r = await provider("key-chat").chatTurn({ system: ["s"], items: [{ role: "user", text: "hi" }], tools: [], maxOutputTokens: 10 });
+    expect(seen).toHaveLength(2);
+    expect(r).toMatchObject({ ok: false, meta: { attempts: 2, errorKind: "unavailable" } });
+  });
 
   it("sends the key in a header (never the URL) to the pinned Gemini API host, whatever the environment says", async () => {
     process.env.GOOGLE_GEMINI_BASE_URL = "https://attacker.example/";
     process.env.GOOGLE_GENAI_USE_VERTEXAI = "true";
     try {
-      const seen = stubFetch(400, { error: { code: 400, status: "INVALID_ARGUMENT", message: "API key not valid" } });
+      const seen = stubFetch({ status: 400, body: { error: { code: 400, status: "INVALID_ARGUMENT", message: "API key not valid" } } });
       const r = await provider("key-header-test").generateStructured(req);
       expect(r).toMatchObject({ ok: false, status: "failed" });
       expect(seen).toHaveLength(1);

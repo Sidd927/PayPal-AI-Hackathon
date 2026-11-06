@@ -1,45 +1,52 @@
 # Submission Checklist
 
-Deadline: **Thu Nov 12 2026, 12:00 PM PT**. Target submission: **Wed Nov 11**.
+Deadline: **Thu Nov 12 2026, 12:00 PM PT**. Target: submit on **Wed Nov 11**. Re-read the official rules on Devpost once before submitting: they couldn't be fetched from the build environment, and the details below come from the owner's brief and public listings.
 
 ## Requirements
 
 | Item | Status | Owner action |
 |---|---|---|
-| Meaningful PayPal technology | ✅ Invoicing v2 + Webhooks | — |
-| Meaningful AI | ✅ Claude diagnosis + payer agent | — |
-| Functional prototype | ✅ Runs locally (simulation verified); sandbox code path contract-tested | Run against the real sandbox (`submission/DEMO_WALKTHROUGH.md`, Option B) |
-| Public repository | ⏳ Repo exists on GitHub | Make `Sidd927/PayPal-AI-Hackathon` **public**; merge the branch to `main` |
-| Open-source licence | ✅ MIT (`LICENSE`) | — |
-| Setup instructions | ✅ README | — |
-| Description | ✅ `submission/DEVPOST_DESCRIPTION.md` | Paste into Devpost |
-| Which AI tools are used | ✅ In the description (Claude via the Anthropic SDK) | — |
-| YouTube video < 3 min, public | ⏳ | Record with `submission/VIDEO_SCRIPT.md` |
-| Testing access | ⏳ | Deploy to Render (`render.yaml`) and add the URL; or rely on the local quick start |
-| Screenshots / gallery | ✅ `docs/screenshots/` (simulation) | Re-capture with sandbox badges after the live run (`npm run test:e2e` regenerates them in simulation) |
+| Meaningful PayPal technology | ✅ Invoicing v2 + Webhooks (`docs/PAYPAL_INTEGRATION.md`) | — |
+| Meaningful AI | ✅ Gemini diagnosis + tool-using payer assistant (Claude optional) | Run `npm run verify:ai` (`submission/OWNER_VERIFICATION.md`) |
+| Functional prototype | ✅ Simulation verified end to end (22 browser checks); live code path verified against a strict mock (26 checks) | Read-only sandbox check (`OWNER_VERIFICATION.md` §4) |
+| Public repository | ⏳ | Make `Sidd927/PayPal-AI-Hackathon` public. Judges see the default branch, so bring `main` up to date (your decision; nothing has been merged) |
+| Open-source licence | ✅ MIT (`LICENSE`, root) | — |
+| Setup instructions | ✅ README → *Run it* (no keys needed for the simulation) | — |
+| Text description | ✅ `submission/DEVPOST_DESCRIPTION.md` | Fill the two bracketed lines, then paste |
+| Tools used | ✅ In the description | — |
+| Demo video < 3 min, public | ⏳ | Record with `submission/VIDEO_SCRIPT.md` (Mode A) |
+| Testing access | ✅ Local quick start (simulation, no keys) | Optional hosted demo: see the end of this file |
+| Screenshots | ✅ `docs/screenshots/` (simulation, rules-only) | Optional: re-capture with **AI: Gemini** after preparing the video database |
 
-## Credentials and access the owner must provide
+## Credentials (yours, never in the repo or chat)
 
-1. PayPal sandbox REST app **Client ID / Secret** (developer.paypal.com).
-2. A sandbox **personal** account email (for paying as the client).
-3. An **Anthropic API key** (expected spend under $10 for testing and the demo).
-4. A **Render** account (free) if hosting.
-5. To run the sandbox from a Claude Code cloud session, add `api-m.sandbox.paypal.com` and `www.sandbox.paypal.com` to the environment's allowed domains.
+1. PayPal sandbox REST app **Client ID / Secret**, already in `.env.local`.
+2. **Gemini API key** (`GEMINI_API_KEY`), already in `.env.local`. Anthropic is optional and not needed.
+3. Optional: an AG Grid / AG Studio trial licence key (`NEXT_PUBLIC_AG_GRID_LICENSE_KEY`). AG Studio works locally without one, but its watermark may be visible. No key is included in the repository.
 
 ## Prize eligibility
 
-- Grand Prize / honourable mentions: automatic.
-- **AG Grid** sponsor prize: AG Grid on the board and activity log; AG Studio for Insights, including a custom Studio Agent Framework agent. Mention both in "Built with". **Request the AG Studio trial key** (info@ag-grid.com) and set `NEXT_PUBLIC_AG_GRID_LICENSE_KEY` in hosting before judging, so the watermark is gone. See `qa/AG_STUDIO_SPONSOR_READINESS.md`.
-- **Render** sponsor prize (alternative): only if deployed on Render. A project can win only one sponsor prize, and AG Grid is our primary target.
+- One Grand Prize **or** one honourable mention, plus one sponsor prize.
+- **Sponsor prize: Best Use of AG Grid** (the Devpost rules' name; AG Grid's own announcement says "Best Use of AG Studio" for the same prize). Unstuck uses AG Grid for the board and activity log, and AG Studio for Insights with our own Agent Framework agent in Studio's AI panel. Name both in "Built with". See `qa/AG_STUDIO_SPONSOR_READINESS.md`.
+- Render is not targeted: deploying only to qualify would add risk, not product value.
 
 ## Final checks before pressing Submit
 
-- [ ] `npm run test:all` green on the submitted commit
-- [ ] Live sandbox walkthrough done once end to end
-- [ ] README "Honest status" updated after the sandbox run
-- [ ] Repo public; no secrets (`git log -p | grep -i secret` is clean)
+- [ ] `npm run lint && npm test && npm run build && npm run test:contract` green on the submitted commit
+- [ ] `npm run verify:ai` run locally; `real_provider_response_received: true` before claiming real Gemini
+- [ ] `npm run check:sandbox` run locally (read-only); numbers match the description
+- [ ] Bracketed placeholders in `DEVPOST_DESCRIPTION.md` filled from real output, or deleted; never publish an unmeasured number
+- [ ] Hackathon start date on Devpost is on or before 4 Nov 2026 (the first commit), so the "Built during the hackathon" line holds
+- [ ] Generated evidence reviewed before adding to git: `verify:ai` and `eval` write new files under `qa/ai-verification/` and `qa/eval/`, and `npm run test:e2e` rewrites the tracked `docs/screenshots/`. Add only the files you mean to publish, by name, never with `git add -A`; never add `.db` files or `.env*`
+- [ ] Repo public; no secrets. `git log -p | grep -cE "AIza[0-9A-Za-z_-]{30,}|sk-ant-api[0-9]{2}-[A-Za-z0-9_-]{20,}"` prints `0` (the redaction code and test fixtures mention the prefixes, so a plain grep shows harmless matches). No `.env.local` and no `.db` files are tracked
 - [ ] Video public, < 3:00, link works in a private window
-- [ ] Devpost fields: name, tagline, description, built-with, repo URL, video URL, demo URL, screenshots
-- [ ] Replace the bracketed placeholders in `DEVPOST_DESCRIPTION.md` with the real sandbox and Claude results (or delete them); never publish a number that wasn't measured
-- [ ] Hosted demo set to `UNSTUCK_MODE=simulation` for open judging, or real sandbox with `OWNER_BASIC_AUTH` and credentials in the testing-instructions field
-- [ ] Re-read the official rules page once (it could not be fetched from the build environment)
+- [ ] Devpost fields: name, tagline, description, built-with, repo URL, video URL, screenshots; demo URL only if a hosted demo really exists
+
+## Optional hosted demo (only with your approval)
+
+`render.yaml` deploys on Render's free plan. For an open judge demo, leave the PayPal secrets empty (or add `UNSTUCK_MODE=simulation`): the app then runs the labelled simulation. A Gemini key is optional. It's open to judges and safe, because no PayPal calls are made and all data is fictional. Limits:
+- the free instance sleeps when idle (first load is slow);
+- the SQLite file is on an ephemeral disk (a restart re-seeds the demo);
+- with a Gemini key on a public demo, anyone can spend your daily AI budget (`AI_DAILY_CALL_LIMIT` caps it).
+
+Never deploy with real PayPal credentials without `OWNER_BASIC_AUTH`; the app refuses to serve the owner console in that case. The local quick start already satisfies the "run instructions" option.

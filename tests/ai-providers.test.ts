@@ -16,7 +16,7 @@ import { runAgent, runView } from "@/lib/services/agent";
 import { payerSendMessage } from "@/lib/services/payer";
 import { DIAGNOSIS_MAX_TOKENS } from "@/lib/ai/diagnosis";
 import { getAiProvider } from "@/lib/ai/providers";
-import { classifyGeminiError, GEMINI_RETRY, setGeminiClient, toGeminiSchema, type GeminiClientLike } from "@/lib/ai/providers/gemini";
+import { classifyGeminiError, GEMINI_REQUEST_TIMEOUT_MS, GEMINI_SDK_RETRY, setGeminiClient, toGeminiSchema, type GeminiClientLike } from "@/lib/ai/providers/gemini";
 import { paceRequests, resetPacing, safeErrorText } from "@/lib/ai/shared";
 import { describeAiStatus } from "@/lib/ai-status";
 import { POST as llm } from "@/app/api/insights/llm/route";
@@ -99,6 +99,23 @@ describe("provider selection", () => {
     expect(getAiProvider()).toMatchObject({ id: "gemini", model: DEFAULT_GEMINI_MODEL });
   });
 
+  it("numeric AI settings fail safe: invalid values fall back to the defaults instead of disabling pacing or the cap", () => {
+    enableGemini();
+    for (const [rpm, limit, wantRpm, wantLimit] of [
+      ["ten", "abc", 10, 500],
+      ["", " ", 10, 500],
+      ["Infinity", "NaN", 10, 500],
+      ["-3", "-1", 1, 0],
+      ["3", "0", 3, 0],
+      ["0.5", "250", 1, 250],
+    ] as const) {
+      process.env.GEMINI_MAX_RPM = rpm;
+      process.env.AI_DAILY_CALL_LIMIT = limit;
+      expect(readConfig().ai).toMatchObject({ geminiMaxRpm: wantRpm, dailyCallLimit: wantLimit });
+    }
+    delete process.env.AI_DAILY_CALL_LIMIT;
+  });
+
   it("GEMINI_MODEL overrides the model", () => {
     enableGemini();
     process.env.GEMINI_MODEL = "gemini-other";
@@ -147,7 +164,8 @@ describe("Gemini structured diagnosis", () => {
     expect(JSON.stringify(req.config.responseJsonSchema)).not.toContain("$schema");
     expect(req.config.responseJsonSchema.properties.reason.enum).toContain("missing_info");
     expect(req.contents[0].parts[0].text).toContain("<client_message>"); // client text is quoted as untrusted data
-    expect(req.config.httpOptions).toMatchObject({ timeout: 120_000, retryOptions: GEMINI_RETRY });
+    expect(req.config.httpOptions).toMatchObject({ timeout: 60_000, retryOptions: { attempts: 1 } }); // SDK retries off; ours are paced
+    expect(typeof req.config.httpOptions.fetch).toBe("function"); // per-attempt Retry-After capture
 
     expect(latest()).toMatchObject({ source: "ai", ai_status: "used", ai_provider: "gemini", model: "gemini-test-model-001", reason: "missing_info" });
     const ev = diagEvent();
@@ -183,14 +201,15 @@ describe("Gemini structured diagnosis", () => {
   });
 
   it.each<[string, Error, string, RegExp]>([
-    ["a per-minute rate limit", apiErr(429, { code: 429, status: "RESOURCE_EXHAUSTED", message: "Quota exceeded for metric generate_content_free_tier_requests per minute" }), "rate_limited", /HTTP 429 RESOURCE_EXHAUSTED \(requests-per-minute or quota limit/],
+    ["a per-minute rate limit", apiErr(429, { code: 429, status: "RESOURCE_EXHAUSTED", message: "Quota exceeded for metric generate_content_free_tier_requests per minute" }), "rate_limited", /HTTP 429 RESOURCE_EXHAUSTED \(requests-per-minute limit\) after 2 attempts/],
     ["the daily free-tier quota", apiErr(429, { code: 429, status: "RESOURCE_EXHAUSTED", message: "Quota exceeded: GenerateRequestsPerDayPerProjectPerModel-FreeTier" }), "rate_limited", /daily quota exhausted/],
     ["an invalid key", apiErr(400, { code: 400, status: "INVALID_ARGUMENT", message: `API key not valid. Please pass a valid API key. ${FAKE_GOOGLE_KEY}`, details: [{ reason: "API_KEY_INVALID" }] }), "failed", /HTTP 400 INVALID_ARGUMENT \(check GEMINI_API_KEY\)/],
     ["a key without access", apiErr(403, { code: 403, status: "PERMISSION_DENIED", message: "Permission denied" }), "failed", /HTTP 403 PERMISSION_DENIED \(check GEMINI_API_KEY\)/],
     ["an unknown model", apiErr(404, { code: 404, status: "NOT_FOUND", message: "models/x is not found" }), "failed", /HTTP 404 NOT_FOUND \(check GEMINI_MODEL\)/],
     ["a region restriction", apiErr(400, { code: 400, status: "FAILED_PRECONDITION", message: "User location is not supported for the API use." }), "failed", /not available for this key or region/],
-    ["a server error", apiErr(503, { code: 503, status: "UNAVAILABLE", message: "The model is overloaded" }), "failed", /HTTP 503 UNAVAILABLE$/],
-    ["a timeout", Object.assign(new Error("The operation was aborted due to timeout"), { name: "AbortError" }), "failed", /Gemini did not respond in time/],
+    ["an overloaded model (503)", apiErr(503, { code: 503, status: "UNAVAILABLE", message: "The model is overloaded" }), "failed", /Gemini temporarily unavailable, HTTP 503 UNAVAILABLE \("The model is overloaded"\) after 3 attempts/],
+    ["an internal server error", apiErr(500, { code: 500, status: "INTERNAL", message: "Internal error encountered." }), "failed", /HTTP 500 INTERNAL \("Internal error encountered."\) after 3 attempts/],
+    ["a timeout", Object.assign(new Error("The operation was aborted due to timeout"), { name: "AbortError" }), "failed", /Gemini did not respond within 60 s$/],
     ["a network failure", new TypeError("fetch failed"), "failed", /could not reach the Gemini API/],
   ])("%s is classified, falls back to rules and never leaks the key", async (_name, err, status, detail) => {
     enableGemini();
@@ -217,9 +236,9 @@ describe("Gemini structured diagnosis", () => {
     expect(latest()).toMatchObject({ source: "rules", ai_status: "unusable" });
   });
 
-  it("retries are bounded (2 attempts total) and 429 is never retried by the SDK", () => {
-    expect(GEMINI_RETRY.attempts).toBe(2);
-    expect(GEMINI_RETRY.httpStatusCodes).not.toContain(429);
+  it("the SDK's own retry loop is off (one HTTP attempt per SDK call); the per-attempt timeout is 60 s", () => {
+    expect(GEMINI_SDK_RETRY).toEqual({ attempts: 1 });
+    expect(GEMINI_REQUEST_TIMEOUT_MS).toBe(60_000);
   });
 });
 
@@ -228,10 +247,11 @@ describe("shared guarantees with Gemini", () => {
     enableGemini();
     const calls = fakeGemini(apiErr(429, { code: 429, status: "RESOURCE_EXHAUSTED", message: "per minute" }));
     await diagnoseInvoice(ids.northwind!);
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2); // a per-minute 429 is retried once, after the wait Google asks for (or 60 s)
+    expect(latest()).toMatchObject({ source: "rules", ai_status: "rate_limited" });
     const skipped = await diagnoseInvoice(ids.northwind!);
     expect(skipped.skipped).toBe(true);
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
     fakeGemini(ok());
     await diagnoseInvoice(ids.northwind!, { force: true });
     expect(latest()).toMatchObject({ source: "ai", ai_status: "used" });
@@ -380,6 +400,12 @@ describe("Gemini tool calling (payer agent and AG Studio)", () => {
     fakeGemini(apiErr(429, { code: 429, status: "RESOURCE_EXHAUSTED", message: "per minute" }));
     const r = await post({ input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] }] });
     expect(r.status).toBe(429);
+    // A per-minute 429 pushes every Gemini request back ~60 s, so an immediate second chat turn fails fast as
+    // "busy" (also a 429) without being sent. Reset pacing to test the auth-error mapping on its own.
+    const busy = await post({ input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "again" }] }] });
+    expect(busy.status).toBe(429);
+    expect((await busy.json()).error).toMatch(/busy with queued requests/);
+    resetPacing();
     fakeGemini(apiErr(400, { code: 400, status: "INVALID_ARGUMENT", message: `API key not valid ${FAKE_GOOGLE_KEY}` }));
     const r2 = await post({ input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] }] });
     expect(r2.status).toBe(502);

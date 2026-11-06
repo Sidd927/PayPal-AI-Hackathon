@@ -1,5 +1,4 @@
 import { assertSameOrigin, json, readJson, route } from "@/lib/http";
-import { consumeAiBudget } from "@/lib/ai/shared";
 import { getAiProvider } from "@/lib/ai/providers";
 import { conversationScope, rememberRaw, studioItemsToChat, type StudioRequest } from "@/lib/ai/studio-chat";
 import { safeErrorText } from "@/lib/ai/shared";
@@ -18,7 +17,6 @@ export const POST = route(async (req: Request) => {
   const provider = getAiProvider();
   const ai = readConfig().ai;
   if (!provider) return json({ error: `AI is not configured on this server (set ${ai.keyVariable}). The Unstuck Insights agent still works.` }, 503);
-  if (!consumeAiBudget()) return json({ error: "Daily AI call limit reached" }, 429);
   const body = await readJson<StudioRequest>(req, 1_000_000); // Studio sends the report schema and query results each turn
 
   const scope = conversationScope(body.input);
@@ -35,7 +33,8 @@ export const POST = route(async (req: Request) => {
     // Adapters return errors as values; this only catches the unexpected, with the same safe wording.
     return json({ error: safeErrorText(`AI request failed: ${(e as Error)?.message ?? "unknown error"}`) }, 502);
   }
-  if (!res.ok) return json({ error: res.error }, res.status === "rate_limited" ? 429 : 502);
+  // Budget is charged per HTTP attempt by the provider's retry runner; a reached limit or a 429 is a 429 here.
+  if (!res.ok) return json({ error: res.error }, res.status === "rate_limited" || res.status === "budget_exhausted" ? 429 : 502);
   rememberRaw(scope, res.toolCalls, res.raw); // server-side only; never part of the response
 
   const id = res.meta.requestId ?? `turn_${Date.now().toString(36)}`;

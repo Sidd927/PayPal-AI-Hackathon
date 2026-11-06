@@ -9,7 +9,7 @@ export const STAGE_META: Record<LoopStage, { label: string; hint: string; amount
   detected: { label: "Spotted", hint: "Late or unanswered, not diagnosed yet", amountLabel: "owed" },
   diagnosed: { label: "Understood", hint: "The agent knows why; nothing to send yet", amountLabel: "owed" },
   approval: { label: "Waiting for you", hint: "A fix is ready and needs your OK", amountLabel: "owed" },
-  acted: { label: "Acted", hint: "Done in PayPal or by you; waiting on the client", amountLabel: "owed" },
+  acted: { label: "Acted", hint: "Unstuck or you acted (labelled when simulated); waiting on the client", amountLabel: "owed" },
   agreed: { label: "Agreed", hint: "Plan or promise in place; tracking payments", amountLabel: "still owed" },
   paid: { label: "Paid", hint: "Collected after Unstuck acted", amountLabel: "collected" },
 };

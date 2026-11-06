@@ -12,7 +12,7 @@
  * Safety: PayPal credentials are removed from this process, UNSTUCK_MODE is forced to "simulation", the gateway
  * is asserted to be the simulated one, and network access is limited to the configured AI provider's API host:
  * every other request (PayPal included) is blocked and counted.
- * Cost: about a dozen generation calls (one per demo invoice plus a few checks), paced to the provider's free-tier
+ * Cost: about a dozen generation calls (one per demo invoice plus a few checks; more if Gemini returns 503 and a call is retried), paced to the provider's free-tier
  * rate (Gemini: GEMINI_MAX_RPM, default 10/minute, so expect a few minutes). The deliberate failure checks
  * (unknown model, invalid key) return errors and generate nothing.
  */
@@ -125,9 +125,13 @@ async function main() {
     const row = getDb().prepare("SELECT value_json FROM settings WHERE key = 'ai_usage'").get() as { value_json: string } | undefined;
     return row ? (JSON.parse(row.value_json) as { calls: number }).calls : 0;
   };
+  /** HTTP attempts recorded on diagnosis events after `afterId` (each attempt is one unit of the daily budget). */
+  const maxEventId = () => (getDb().prepare("SELECT COALESCE(MAX(id), 0) AS id FROM events").get() as { id: number }).id;
+  const attemptsSince = (afterId: number) =>
+    (getDb().prepare("SELECT data_json FROM events WHERE id > ? AND kind IN ('diagnosed', 'ai_retry_failed') AND data_json IS NOT NULL").all(afterId) as { data_json: string }[]).reduce((a, e) => a + ((JSON.parse(e.data_json) as { attempts?: number | null }).attempts ?? 0), 0);
   const lastDiagEvent = (invoiceId: string) => {
     const e = repo.listEvents({ invoiceId, limit: 50 }).find((x) => x.kind === "diagnosed");
-    return e?.data_json ? (JSON.parse(e.data_json) as { provider?: string; model?: string; request_id?: string | null; latency_ms?: number | null; usage?: { input_tokens: number | null; output_tokens: number | null; thinking_tokens: number | null } | null; ai_status?: string; finish_reason?: string | null }) : null;
+    return e?.data_json ? (JSON.parse(e.data_json) as { provider?: string; model?: string; request_id?: string | null; latency_ms?: number | null; usage?: { input_tokens: number | null; output_tokens: number | null; thinking_tokens: number | null } | null; ai_status?: string; finish_reason?: string | null; attempts?: number | null; total_ms?: number | null; error_kind?: string; http_status?: number | null; schema_mode?: string | null }) : null;
   };
   /** Independent re-validation of a stored diagnosis, including a check that client quotes are verbatim. */
   const validate = (invoiceId: string) => {
@@ -171,7 +175,7 @@ async function main() {
   await diagnoseInvoice(nw); // no force
   const up = validate(nw);
   const upEv = lastDiagEvent(nw);
-  check("real_provider", `1b. Once ${label} is available, the rules-only diagnosis is upgraded with exactly one call`, up.d.source === "ai" && up.d.ai_status === "used" && up.d.ai_provider === providerId && calls() === c0 + 1, `${up.d.source}/${up.d.ai_status}${up.d.ai_detail ? `: ${up.d.ai_detail}` : ""}`);
+  check("real_provider", `1b. Once ${label} is available, the rules-only diagnosis is upgraded with one logical call (budget = HTTP attempts)`, up.d.source === "ai" && up.d.ai_status === "used" && up.d.ai_provider === providerId && (upEv?.attempts ?? 0) >= 1 && calls() === c0 + (upEv?.attempts ?? -1), `${up.d.source}/${up.d.ai_status}${up.d.ai_detail ? `: ${up.d.ai_detail}` : ""}; ${upEv?.attempts ?? "?"} HTTP attempt(s), ${calls() - c0} budget unit(s)`);
   check("real_provider", `1c. Real ${label} response: provider, model, schema-valid diagnosis with evidence`, up.d.source === "ai" && upEv?.provider === providerId && !!up.d.model && up.problems.length === 0, `provider ${upEv?.provider ?? "?"}, model ${up.d.model}, request ${upEv?.request_id ?? "not provided"}, ${upEv?.latency_ms ?? "?"} ms, finish ${upEv?.finish_reason ?? "?"}, tokens in/out/thinking ${upEv?.usage?.input_tokens ?? "?"}/${upEv?.usage?.output_tokens ?? "?"}/${upEv?.usage?.thinking_tokens ?? "?"}${up.problems.length ? `; problems: ${up.problems.join("; ")}` : ""}`);
   say(`      → reason ${up.d.reason}, confidence ${up.d.confidence}, action ${up.action}`);
   for (const e of up.evidence) say(`      → evidence (${e.source}): ${e.quote}`);
@@ -189,7 +193,7 @@ async function main() {
   const forcedEv = lastDiagEvent(nw);
   const forcedRow = repo.latestDiagnosis(nw)!;
   const differentRequest = !forcedEv?.request_id || !upEv?.request_id || forcedEv.request_id !== upEv.request_id;
-  check("real_provider", `3. Diagnose again (force) makes a new ${label} call and a new diagnosis`, calls() === c0 + 1 && forcedRow.id !== before && forcedRow.source === "ai" && differentRequest, `request ${forcedEv?.request_id ?? "not provided"}`);
+  check("real_provider", `3. Diagnose again (force) makes a new ${label} call and a new diagnosis`, calls() === c0 + (forcedEv?.attempts ?? -1) && forcedRow.id !== before && forcedRow.source === "ai" && differentRequest, `request ${forcedEv?.request_id ?? "not provided"}`);
 
   // 4. Full agent run over every open demo invoice (simulated PayPal).
   c0 = calls();
@@ -198,18 +202,19 @@ async function main() {
   const perInvoice = open.map((inv) => {
     const v = validate(inv.id);
     const ev = lastDiagEvent(inv.id);
-    return { client: inv.recipient_business, number: inv.number, source: v.d.source, ai_status: v.d.ai_status, provider: v.d.ai_provider, ai_detail: v.d.ai_detail, model: v.d.model, reason: v.d.reason, confidence: v.d.confidence, action: v.action, evidence: v.evidence.length, problems: v.problems, request_id: ev?.request_id ?? null, latency_ms: ev?.latency_ms ?? null, usage: ev?.usage ?? null };
+    return { client: inv.recipient_business, number: inv.number, source: v.d.source, ai_status: v.d.ai_status, provider: v.d.ai_provider, ai_detail: v.d.ai_detail, model: v.d.model, reason: v.d.reason, confidence: v.d.confidence, action: v.action, evidence: v.evidence.length, problems: v.problems, request_id: ev?.request_id ?? null, latency_ms: ev?.latency_ms ?? null, total_ms: ev?.total_ms ?? null, attempts: ev?.attempts ?? null, error_kind: ev?.error_kind ?? null, schema_mode: ev?.schema_mode ?? null, usage: ev?.usage ?? null };
   });
-  say("\n      Client                 Source       Reason          Conf  Action                       Request id");
-  for (const r of perInvoice) say(`      ${String(r.client).padEnd(22)} ${(r.source === "ai" ? String(r.provider) : `RULES:${r.ai_status}`).padEnd(12)} ${r.reason.padEnd(15)} ${r.confidence.toFixed(2)}  ${r.action.padEnd(28)} ${r.request_id ?? "-"}${r.ai_detail ? `  [${r.ai_detail}]` : ""}`);
+  say("\n      Client                 Source       Reason          Conf  Action                       Tries  Request id");
+  for (const r of perInvoice) say(`      ${String(r.client).padEnd(22)} ${(r.source === "ai" ? String(r.provider) : `RULES:${r.ai_status}`).padEnd(12)} ${r.reason.padEnd(15)} ${r.confidence.toFixed(2)}  ${r.action.padEnd(28)} ${String(r.attempts ?? "-").padEnd(6)} ${r.request_id ?? "-"}${r.ai_detail ? `  [${r.ai_detail}]` : ""}`);
   const aiCount = perInvoice.filter((r) => r.source === "ai" && r.ai_status === "used" && r.provider === providerId && r.problems.length === 0).length;
   check("real_provider", `4. Agent run: every open demo invoice has a valid ${label} diagnosis (${aiCount}/${open.length})`, aiCount === open.length, `${calls() - c0} API calls this run; run summary ${JSON.stringify(run1.summary)}`);
 
   // 5. A second run calls the provider only for invoices whose inputs changed.
   c0 = calls();
+  const ev2 = maxEventId();
   const run2 = runView((await runAgent("manual")).runId)!;
   const stillAi = open.filter((i) => repo.latestDiagnosis(i.id)!.source === "ai").length;
-  check("real_provider", `5. Second agent run: ${label} is called only for invoices whose inputs changed, and they stay AI-diagnosed`, calls() - c0 === (run2.summary?.diagnosed ?? -1) && (run2.summary?.unchanged ?? 0) > 0 && (run2.summary?.aiFallbacks ?? 0) === 0 && stillAi === open.length, `${calls() - c0} call(s), ${run2.summary?.diagnosed} re-diagnosed, ${run2.summary?.unchanged} reused, ${run2.summary?.aiFallbacks ?? 0} fell back, ${stillAi}/${open.length} AI-diagnosed`);
+  check("real_provider", `5. Second agent run: ${label} is called only for invoices whose inputs changed, and they stay AI-diagnosed`, calls() - c0 === attemptsSince(ev2) && (run2.summary?.unchanged ?? 0) > 0 && (run2.summary?.aiFallbacks ?? 0) === 0 && stillAi === open.length, `${calls() - c0} call(s), ${run2.summary?.diagnosed} re-diagnosed, ${run2.summary?.unchanged} reused, ${run2.summary?.aiFallbacks ?? 0} fell back, ${stillAi}/${open.length} AI-diagnosed`);
 
   // 6. Deliberate failures against the real API: unknown model, then an invalid key. Neither generates anything.
   const lumen = ids.lumen!;
@@ -258,6 +263,15 @@ async function main() {
   const report = {
     invoices: perInvoice,
     totals: { api_calls_counted: calls(), provider_http_requests: guard.log.allowedRequests, paypal_requests_attempted: paypalAttempts.length, other_requests_blocked: otherBlocked.length },
+    // Every provider failure seen during the run, by class (unavailable = 503, rate_limited = 429 per minute, …).
+    provider_errors: (() => {
+      const kinds: Record<string, number> = {};
+      for (const e of getDb().prepare("SELECT data_json FROM events WHERE kind IN ('diagnosed', 'ai_retry_failed') AND data_json IS NOT NULL").all() as { data_json: string }[]) {
+        const k = (JSON.parse(e.data_json) as { error_kind?: string }).error_kind;
+        if (k) kinds[k] = (kinds[k] ?? 0) + 1;
+      }
+      return kinds;
+    })(),
     cleanup: { removed_before_run: removed, kept_for_inspection: path.relative(process.cwd(), DB_FILE), sandbox_database_untouched: originalDbPath !== path.resolve(DB_FILE) },
     not_verified_here: ["'unusable' (cut-off, refusal, invalid JSON) and 'rate_limited' outcomes cannot be triggered safely against the real API; they are covered by tests/ai-providers.test.ts and tests/ai-diagnosis.test.ts"],
   };
